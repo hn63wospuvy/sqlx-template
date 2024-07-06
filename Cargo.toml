@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["hg <hn63wospuvy@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/hn63wospuvy/sqlx-template"
+description = "Template query library for Rust SQLx "
 keywords = ["sqlx", "template", "database", "postgres", "mysql", "sqlite"]
 categories = ["database", "template"]
 
