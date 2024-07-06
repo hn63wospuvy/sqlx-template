@@ -7,7 +7,7 @@ license = "Apache-2.0"
 repository = "https://github.com/hn63wospuvy/sqlx-template"
 description = "Template query library for Rust SQLx "
 keywords = ["sqlx", "postgres", "mysql", "sqlite"]
-categories = ["database", "template"]
+categories = ["database"]
 
 [lib]
 proc-macro = true
