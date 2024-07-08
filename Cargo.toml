@@ -1,13 +1,28 @@
+[workspace]
+members = [
+    ".", "examples/sqlite",
+]
+
+
+[workspace.package]
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+repository = "https://github.com/hn63wospuvy/sqlx-template"
+keywords = ["database", "async", "postgres", "mysql", "sqlite"]
+categories = ["database", "asynchronous"]
+authors = ["hg <hn63wospuvy@gmail.com>"]
+
 [package]
 name = "sqlx-template"
-version = "0.1.0"
-edition = "2021"
-authors = ["hg <hn63wospuvy@gmail.com>"]
-license = "Apache-2.0"
-repository = "https://github.com/hn63wospuvy/sqlx-template"
+readme = "README.md"
+documentation = "https://docs.rs/sqlx-template"
 description = "Template query library for Rust SQLx "
-keywords = ["sqlx", "postgres", "mysql", "sqlite"]
-categories = ["database"]
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [lib]
 proc-macro = true
@@ -22,7 +37,6 @@ sqlformat = "0.2.4"
 rust-format = "0.3"
 once_cell = "1.18"
 [features]
-default = ["postgres"]
 postgres = []
 mysql = []
 sqlite = []
