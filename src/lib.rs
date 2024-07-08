@@ -21,7 +21,7 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     .into()
 }
 
-#[proc_macro_derive(UpdateTemplate, attributes(table_name, update, debug_slow))]
+#[proc_macro_derive(UpdateTemplate, attributes(table_name, tp_update, debug_slow))]
 pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::update::derive_update(input) {
@@ -32,7 +32,7 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 }
 
 
-#[proc_macro_derive(DeleteTemplate, attributes(table_name, delete, debug_slow))]
+#[proc_macro_derive(DeleteTemplate, attributes(table_name, tp_delete, debug_slow))]
 pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::delete::derive_delete(input) {
@@ -41,7 +41,7 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     }
     .into()
 }
-#[proc_macro_derive(QueryTemplate, attributes(table_name, debug_slow, query_by, query_all, query_one, query_page, stream, count))]
+#[proc_macro_derive(QueryTemplate, attributes(table_name, debug_slow, tp_query_all, tp_query_one, tp_query_page, tp_query_stream, tp_query_count))]
 pub fn query_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::query::derive_query(input) {

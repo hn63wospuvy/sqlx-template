@@ -32,7 +32,7 @@ pub fn derive_update(ast: DeriveInput) -> syn::Result<TokenStream> {
             ..
         })) = attr.parse_meta()
         {
-            if path.is_ident("update") {
+            if path.is_ident("tp_update") {
                 let mut by_fields = Vec::new();
                 let mut on_fields = Vec::new();
                 let mut version_fields = Vec::new();

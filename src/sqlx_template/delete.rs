@@ -34,7 +34,7 @@ pub fn derive_delete(ast: DeriveInput) -> syn::Result<TokenStream> {
             let mut fn_name_attr = None;
             let mut return_entity = false;
             let mut debug_slow = debug_slow.clone();
-            if path.is_ident("delete") {
+            if path.is_ident("tp_delete") {
                 for meta in nested {
                     match meta {
                         NestedMeta::Meta(Meta::NameValue(nv)) => {
