@@ -24,8 +24,8 @@ enum QueryType {
     Page,
 }
 
-pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> syn::Result<TokenStream> {
-    let query_string = match args.first() {
+fn get_query_string(nested_meta: Option<&NestedMeta>) -> syn::Result<String> {
+    let res = match nested_meta {
         Some(NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, eq_token}))) => {
             let path_name = path.segments
                 .first()
@@ -65,9 +65,13 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
         },
         _ => panic!("Expected a string literal for the query in the first attribute")
     };
-    let debug_slow = match args.get(1) {
+    Ok(res)
+}
+
+fn get_debug_slow(nested_meta: Option<&NestedMeta>) -> syn::Result<i32> { 
+    let res = match nested_meta {
         Some(NestedMeta::Lit(Lit::Int(slow_in_ms))) => {
-            slow_in_ms.base10_parse()?
+            slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"))?
         }
         Some(NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, eq_token}))) => {
             let path_name = path.segments
@@ -81,7 +85,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
             }
             match lit {
                 Lit::Int(slow_in_ms) => {
-                    slow_in_ms.base10_parse()?
+                    slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"))?
                 },
                 _ => panic!("Expected a number for the query in the second name-value attribute")
             }
@@ -100,7 +104,69 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
         }
         _ => -1
     };
+    Ok(res)
+}
 
+pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> syn::Result<TokenStream> { 
+    let query_string = get_query_string(args.get(0))?; 
+    let debug_slow = get_debug_slow(args.get(1))?; 
+    // Extract the function name and arguments 
+    let fn_name = &input.sig.ident; 
+    let fn_args = &input.sig.inputs; 
+    let mut map_args = HashMap::new(); 
+    let mut param_names: Vec<String> = fn_args.iter()
+        .filter_map(|arg| { 
+            match arg { 
+                syn::FnArg::Typed(pat_type) => { 
+                    if let syn::Pat::Ident(pat_ident) = &*pat_type.pat { 
+                        let name = pat_ident.ident.to_string(); 
+                        map_args.insert(name.clone(), pat_ident.ident.clone()); 
+                        Some(name) 
+                    } else { 
+                        None 
+                    } 
+                } 
+                syn::FnArg::Receiver(_) => None, 
+            } }).collect(); 
+    // Validate query 
+    let dialect = super::get_database_dialect(); 
+    let queries = match parser::validate_multi_query(&query_string, &param_names, dialect.as_ref()) { 
+        Ok(r) => r, 
+        Err(e) => panic!("{e}"), 
+    }; 
+    let mut queries_gen = vec![]; 
+    for query in queries { 
+        let (before, after) = super::gen_debug_code(Some(debug_slow)); 
+        let binds = &query.params.iter().map(|field| { 
+            // param starts with ':' 
+            let arg_param = map_args.get(&field[1..]).expect("Ident not found"); 
+            quote! { 
+                .bind(&#arg_param) 
+            } 
+        }).collect::<Vec<_>>(); 
+        let sql = query.sql; 
+        let gen = quote! { 
+            let sql = #sql; 
+            let query = sqlx::query(sql)#(#binds)*; 
+            #before 
+            let query = query.execute(conn).await; 
+            #after query?; 
+        }; 
+        queries_gen.push(gen); 
+    } 
+    let database = super::get_database(); 
+    let final_gen = quote! { 
+        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args, conn: E) -> Result<(), sqlx::Error> { 
+            #(#queries_gen)* 
+            Ok(()) 
+        } 
+    }; 
+    let res = super::gen_with_doc(final_gen); 
+    Ok(res) }
+
+pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> syn::Result<TokenStream> {
+    let query_string = get_query_string(args.first())?;
+    let debug_slow = get_debug_slow(args.get(1))?;
 
     // Extract the function name and arguments
     let fn_name = &input.sig.ident;
