@@ -460,7 +460,7 @@ fn build_query(
                                 .fetch(conn)
                                 ;
                             #dbg_after
-                            Ok(query_result)
+                            query_result
                         }
                     }
                 }

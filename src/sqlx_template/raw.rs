@@ -47,7 +47,7 @@ fn get_query_string(nested_meta: Option<&NestedMeta>) -> syn::Result<String> {
                     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
                     let rooted = root.join(&value);
                     if rooted.exists() {
-                        let mut file = File::open(value.trim()).expect("Unable to open file");
+                        let mut file = File::open(rooted).expect("Unable to open file");
                         let mut contents = String::new();
                         file.read_to_string(&mut contents).expect("Failed to read file");
                         contents
@@ -155,12 +155,23 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
         queries_gen.push(gen); 
     } 
     let database = super::get_database(); 
-    let final_gen = quote! { 
-        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args, conn: E) -> Result<(), sqlx::Error> { 
-            #(#queries_gen)* 
-            Ok(()) 
-        } 
+    
+    let final_gen = if fn_args.is_empty() {
+        quote! { 
+            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(conn: E) -> Result<(), sqlx::Error> { 
+                #(#queries_gen)* 
+                Ok(()) 
+            } 
+        }
+    } else {
+        quote! { 
+            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args, conn: E) -> Result<(), sqlx::Error> { 
+                #(#queries_gen)* 
+                Ok(()) 
+            } 
+        }
     }; 
+    dbg!(final_gen.to_string());
     let res = super::gen_with_doc(final_gen); 
     Ok(res) }
 

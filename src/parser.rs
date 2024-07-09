@@ -91,14 +91,7 @@ pub fn convert_to_count_query(sql: &str, dialect: &dyn Dialect) -> Result<String
     }
 }
 
-fn validate_statement(statement: Statement, params: &Vec<String>, mode: Option<Mode>, dialect: &dyn Dialect) -> Result<ValidateQueryResult, String> {
-    match &statement {
-        sqlparser::ast::Statement::Query(_) => if mode.is_some() && mode != Some(Mode::Select) {return Err("Select statement is not allowed here".to_string())},
-        sqlparser::ast::Statement::Insert(_) => if mode.is_some() && mode != Some(Mode::Insert) {return Err("Insert statement is allowed here".to_string())},
-        sqlparser::ast::Statement::Update { .. } => if mode.is_some() && mode != Some(Mode::Update) {return Err("Update statement is allowed here".to_string())},
-        sqlparser::ast::Statement::Delete(_) => if mode.is_some() && mode != Some(Mode::Delete) {return Err("Delete statement is allowed here".to_string())},
-        _ => if mode.is_some() {return Err("Only Select, Insert, Update, Delete statement is allowed".to_string())}
-    }
+fn validate_statement(statement: Statement, params: &Vec<String>, mode: Option<Mode>) -> Result<ValidateQueryResult, String> {
     let mut res = vec![];
     from_statement(&statement, &mut res)?; // Could do better by using trait and impl trait for every struct in sqlparser::ast
     for placeholer in res.as_slice() {
@@ -113,7 +106,7 @@ fn validate_statement(statement: Statement, params: &Vec<String>, mode: Option<M
 
 pub fn validate_multi_query(sql: &str, params: &Vec<String>, dialect: &dyn Dialect) -> Result<Vec<ValidateQueryResult>, String> {
     let mut statements = Parser::parse_sql(dialect, sql).map_err(|x| format!("Parse SQL error. May be due to improperly syntax"))?;
-    statements.into_iter().map(|statement| validate_statement(statement, params, None, dialect)).collect()
+    statements.into_iter().map(|statement| validate_statement(statement, params, None)).collect()
 }
 pub fn validate_query(sql: &str, params: &Vec<String>, mode: Option<Mode>, dialect: &dyn Dialect) -> Result<ValidateQueryResult, String> {
     let mut statements = Parser::parse_sql(dialect, sql).map_err(|x| format!("Parse SQL error. May be due to improperly syntax"))?;
@@ -128,16 +121,7 @@ pub fn validate_query(sql: &str, params: &Vec<String>, mode: Option<Mode>, diale
         sqlparser::ast::Statement::Delete(_) => if mode.is_some() && mode != Some(Mode::Delete) {return Err("Delete statement is allowed here".to_string())},
         _ => if mode.is_some() {return Err("Only Select, Insert, Update, Delete statement is allowed".to_string())}
     }
-    let mut res = vec![];
-    from_statement(&statement, &mut res)?; // Could do better by using trait and impl trait for every struct in sqlparser::ast
-    for placeholer in res.as_slice() {
-        if !params.contains(&placeholer[1..].to_string()) {
-            return Err(format!("Holder {placeholer} is not found in param list"));
-        }
-    }
-    let sql = statement.to_string();
-    let (sql, params) = replace_placeholder(&sql, res);
-    Ok(ValidateQueryResult { sql, params })
+    validate_statement(statement, params, mode)
 }
 
 
@@ -227,7 +211,8 @@ fn from_statement(statement: &Statement, res: &mut Vec<String>) -> Result<(), St
             Ok(())
         },
         sqlparser::ast::Statement::Delete(delete) => from_delete(delete, res),
-        _ => return Err("Only Query, Insert, Update, Delete statement is allowed".to_string())
+        // _ => return Err("Only Query, Insert, Update, Delete statement is allowed".to_string())
+        _ => Ok(())
         
     }
 
