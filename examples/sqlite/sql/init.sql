@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     password TEXT NOT NULL,
     org INTEGER,
     active BOOLEAN NOT NULL,
+    version INTEGER DEFAULT 0,
     created_by TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_by TEXT,
