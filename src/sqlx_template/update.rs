@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type
 };
@@ -446,8 +446,8 @@ pub fn derive_update(ast: DeriveInput) -> syn::Result<TokenStream> {
                     };
                     functions.push(super::gen_with_doc(generated));
                 }
-            }
-        }
+            } 
+        } 
     }
     let expanded = quote! {
         impl #struct_name {

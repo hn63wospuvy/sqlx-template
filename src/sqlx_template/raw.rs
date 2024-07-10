@@ -171,7 +171,6 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
             } 
         }
     }; 
-    dbg!(final_gen.to_string());
     let res = super::gen_with_doc(final_gen); 
     Ok(res) }
 

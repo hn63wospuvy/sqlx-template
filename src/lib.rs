@@ -72,6 +72,17 @@ pub fn table_name_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 }
 
 #[proc_macro_attribute]
+pub fn multi_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::multi_query_derive(input, args, None) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+#[proc_macro_attribute]
 pub fn query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);

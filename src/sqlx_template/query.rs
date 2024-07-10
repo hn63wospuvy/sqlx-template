@@ -220,7 +220,7 @@ fn build_default_find_page_all_query(
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let all_fields_str = all_fields.iter().filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string()))).collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
-    let sql = format!("SELECT {all_fields_str} FROM {table_name} OFFSET $1 LIMIT $2");
+    let sql = format!("SELECT {all_fields_str} FROM {table_name} LIMIT $1 OFFSET $2");
     let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
     let expanded = quote! {
         pub async fn find_page_all<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
@@ -228,8 +228,8 @@ fn build_default_find_page_all_query(
                 let sql = #sql;
                 #dbg_before
                 let query_result = sqlx::query_as::<_, #struct_name>(sql)
-                    .bind(offset)
                     .bind(limit)
+                    .bind(offset)
                     .fetch_all(conn)
                     .await;
                 #dbg_after
@@ -396,17 +396,17 @@ fn build_query(
                 QueryType::Page => {
                     let total_binds_args = by_fields.len();
                     let paging_sql = format!(
-                        "{} OFFSET ${} LIMIT ${}",
+                        "{} LIMIT ${} OFFSET ${} ",
                         sql,
                         total_binds_args + 1,
                         total_binds_args + 2
                     );
                     let mut total_binds = vec![];
                     total_binds.push(quote! {
-                        .bind(paging_offset)
+                        .bind(paging_limit)
                     });
                     total_binds.push(quote! {
-                        .bind(paging_limit)
+                        .bind(paging_offset)
                     });
                     quote! {
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>( page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
@@ -609,7 +609,7 @@ fn build_query(
                 QueryType::Page => {
                     let total_binds_args = by_fields.len();
                     let paging_sql = format!(
-                        "{} OFFSET ${} LIMIT ${}",
+                        "{} LIMIT ${} OFFSET ${} ",
                         sql,
                         total_binds_args + 1,
                         total_binds_args + 2
@@ -617,10 +617,10 @@ fn build_query(
                     let mut total_binds = binds.collect::<Vec<_>>();
                     let mut total_binds_for_count = total_binds.clone();
                     total_binds.push(quote! {
-                        .bind(paging_offset)
+                        .bind(paging_limit)
                     });
                     total_binds.push(quote! {
-                        .bind(paging_limit)
+                        .bind(paging_offset)
                     });
 
                     let fn_args_name = by_fields
