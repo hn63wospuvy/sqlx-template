@@ -1,7 +1,7 @@
 
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use sqlx_template::{multi_query, query, update, DeleteTemplate, QueryTemplate, TableName, UpdateTemplate};
+use sqlx_template::{multi_query, query, select, update, DeleteTemplate, SelectTemplate, TableName, UpdateTemplate};
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
 use sqlx_template::InsertTemplate;
 
@@ -151,18 +151,18 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
     }
 }
 
-#[derive(InsertTemplate, UpdateTemplate, QueryTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
+#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
 #[debug_slow = 1000]
 #[table_name = "users"]
 #[tp_delete(by = "id")]
 #[tp_delete(by = "id, email")]
-#[tp_query_all(by = "id, email", order = "id desc")]
-#[tp_query_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
-#[tp_query_one(by = "email")]
-#[tp_query_page(by = "org", order = "id desc, org desc")]
-#[tp_query_count(by = "id, email")]
+#[tp_select_all(by = "id, email", order = "id desc")]
+#[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
+#[tp_select_one(by = "email")]
+#[tp_select_page(by = "org", order = "id desc, org desc")]
+#[tp_select_count(by = "id, email")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
-#[tp_query_stream(order = "id desc")]
+#[tp_select_stream(order = "id desc")]
 pub struct User {
     #[auto]
     pub id: i32,
@@ -181,11 +181,11 @@ pub struct User {
 
 
 
-#[derive(InsertTemplate, UpdateTemplate, QueryTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
+#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
 #[debug_slow = 1000]
 #[table_name = "chats"]
 #[tp_delete(by = "id")]
-#[tp_query_one(by = "id, sender", order = "id desc")]
+#[tp_select_one(by = "id, sender", order = "id desc")]
 pub struct Chat {
     #[auto]
     pub id: i32,
@@ -199,11 +199,11 @@ pub struct Chat {
 }
 
 
-#[derive(InsertTemplate, UpdateTemplate, QueryTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
+#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
 #[table_name = "organizations"]
 #[tp_delete(by = "id")]
-#[tp_query_one(by = "code")]
-#[tp_query_all(order = "id desc")]
+#[tp_select_one(by = "code")]
+#[tp_select_all(order = "id desc")]
 pub struct Organization {
     #[auto]
     pub id: i32,
@@ -221,6 +221,17 @@ pub struct Organization {
 
 #[multi_query(file = "sql/init.sql", 0)]
 async fn migrate() {}
+
+
+#[select(
+    sql = "
+    SELECT *
+    FROM user
+    WHERE (name = :name and age = :age) OR name LIKE '%:name%'
+",
+    debug = 100
+)]
+pub async fn query_user_info(name: &str, age: i32) -> Vec<User> {}
 
 
 
