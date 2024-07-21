@@ -339,11 +339,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
     };
 
     // Choose database by feature
-    let database = if cfg!(feature = "postgres") {
-        quote! { sqlx::Postgres }
-    } else {
-        panic!("Unknown database")
-    };
+    let database = super::get_database();
 
 
     // Generate the new function with the connection parameter

@@ -11,7 +11,7 @@ use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type
 };
 
-pub mod query;
+pub mod select;
 pub mod update;
 pub mod insert;
 pub mod delete;
@@ -190,6 +190,8 @@ fn gen_debug_code(debug_slow: Option<i32>) -> (TokenStream, TokenStream) {
     }
 }
 
+
+
 pub fn table_name_derive(ast: DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
 
@@ -217,7 +219,7 @@ pub fn get_database() -> TokenStream {
     } else if cfg!(feature = "any") {
         quote! { sqlx::Any }
     } else {
-        panic!("Unknown database")
+        panic!("Unknown database 1")
     }
 }
 
@@ -231,7 +233,7 @@ pub fn get_database_dialect() -> Box<dyn Dialect> {
     } else if cfg!(feature = "any") {
         Box::new(GenericDialect {})
     } else {
-        panic!("Unknown database")
+        panic!("Unknown database 2")
     }
 }
 

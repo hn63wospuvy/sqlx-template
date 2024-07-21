@@ -10,7 +10,7 @@ use syn::{
 use super::{get_database, get_table_name};
 
 #[derive(Debug, PartialEq)]
-enum QueryType {
+enum SelectType {
     All,
     One,
     Page,
@@ -18,7 +18,7 @@ enum QueryType {
     Count,
 }
 
-pub fn derive_query(ast: DeriveInput) -> syn::Result<TokenStream> {
+pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
     let table_name = get_table_name(&ast);
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
@@ -29,7 +29,7 @@ pub fn derive_query(ast: DeriveInput) -> syn::Result<TokenStream> {
     {
         named.iter().collect::<Vec<_>>()
     } else {
-        panic!("QueryTemplate macro only works with structs with named fields");
+        panic!("SelectTemplate macro only works with structs with named fields");
     };
     let mut functions = Vec::new();
     for attr in ast.attrs {
@@ -39,11 +39,11 @@ pub fn derive_query(ast: DeriveInput) -> syn::Result<TokenStream> {
             ..
         })) = attr.parse_meta()
         {
-            if path.is_ident("tp_query_all")
-                || path.is_ident("tp_query_one")
-                || path.is_ident("tp_query_page")
-                || path.is_ident("tp_query_stream")
-                || path.is_ident("tp_query_count")
+            if path.is_ident("tp_select_all")
+                || path.is_ident("tp_select_one")
+                || path.is_ident("tp_select_page")
+                || path.is_ident("tp_select_stream")
+                || path.is_ident("tp_select_count")
             {
                 let mut by_fields = Vec::new();
                 let mut order_fields = Vec::new();
@@ -114,8 +114,8 @@ pub fn derive_query(ast: DeriveInput) -> syn::Result<TokenStream> {
                 order_fields.sort_by_key(|x| x.0.ident.clone());
 
                 let generated = match path.get_ident().unwrap().to_string().as_str() {
-                    "tp_query_all" => build_query(
-                        QueryType::All,
+                    "tp_select_all" => build_query(
+                        SelectType::All,
                         struct_name,
                         &table_name,
                         &all_fields,
@@ -124,8 +124,8 @@ pub fn derive_query(ast: DeriveInput) -> syn::Result<TokenStream> {
                         fn_name,
                         debug_slow,
                     )?,
-                    "tp_query_one" => build_query(
-                        QueryType::One,
+                    "tp_select_one" => build_query(
+                        SelectType::One,
                         struct_name,
                         &table_name,
                         &all_fields,
@@ -134,8 +134,8 @@ pub fn derive_query(ast: DeriveInput) -> syn::Result<TokenStream> {
                         fn_name,
                         debug_slow,
                     )?,
-                    "tp_query_page" => build_query(
-                        QueryType::Page,
+                    "tp_select_page" => build_query(
+                        SelectType::Page,
                         struct_name,
                         &table_name,
                         &all_fields,
@@ -144,8 +144,8 @@ pub fn derive_query(ast: DeriveInput) -> syn::Result<TokenStream> {
                         fn_name,
                         debug_slow,
                     )?,
-                    "tp_query_stream" => build_query(
-                        QueryType::Stream,
+                    "tp_select_stream" => build_query(
+                        SelectType::Stream,
                         struct_name,
                         &table_name,
                         &all_fields,
@@ -154,8 +154,8 @@ pub fn derive_query(ast: DeriveInput) -> syn::Result<TokenStream> {
                         fn_name,
                         debug_slow,
                     )?,
-                    "tp_query_count" => build_query(
-                        QueryType::Count,
+                    "tp_select_count" => build_query(
+                        SelectType::Count,
                         struct_name,
                         &table_name,
                         &all_fields,
@@ -288,7 +288,7 @@ fn build_default_count_all_query(
 }
 
 fn build_query(
-    qtype: QueryType,
+    qtype: SelectType,
     struct_name: &Ident,
     table_name: &str,
     all_fields: &Vec<&Field>,
@@ -329,23 +329,23 @@ fn build_query(
                 ),
                 None => {
                     match qtype {
-                        QueryType::All => Ident::new(
+                        SelectType::All => Ident::new(
                             &format!("find_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
-                        QueryType::One => Ident::new(
+                        SelectType::One => Ident::new(
                             &format!("find_one_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
-                        QueryType::Page => Ident::new(
+                        SelectType::Page => Ident::new(
                             &format!("find_page_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
-                        QueryType::Stream => Ident::new(
+                        SelectType::Stream => Ident::new(
                             &format!("stream_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
-                        QueryType::Count => Ident::new(
+                        SelectType::Count => Ident::new(
                             &format!("count_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
@@ -367,7 +367,7 @@ fn build_query(
             let sql = format!("SELECT {all_fields_str} FROM {table_name} ORDER BY {order_str}");
             let count_sql = format!("SELECT COUNT(1) FROM {table_name} ORDER BY {order_str}");
             let generated = match qtype {
-                QueryType::All => {
+                SelectType::All => {
                     quote! {
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
                             let sql = #sql;
@@ -380,7 +380,7 @@ fn build_query(
                         }
                     }
                 }
-                QueryType::One => {
+                SelectType::One => {
                     quote! {
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> Result<Option<#struct_name>, sqlx::Error> {
                             let sql = #sql;
@@ -393,7 +393,7 @@ fn build_query(
                         }
                     }
                 }
-                QueryType::Page => {
+                SelectType::Page => {
                     let total_binds_args = by_fields.len();
                     let paging_sql = format!(
                         "{} LIMIT ${} OFFSET ${} ",
@@ -451,7 +451,7 @@ fn build_query(
 
                     }
                 }
-                QueryType::Stream => {
+                SelectType::Stream => {
                     quote! {
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> futures::stream::BoxStream<'c, Result<#struct_name, sqlx::Error>> {
                             let sql = #sql;
@@ -464,7 +464,7 @@ fn build_query(
                         }
                     }
                 }
-                QueryType::Count => {
+                SelectType::Count => {
                     return Ok(None); // Do nothing
                 }
             };
@@ -479,7 +479,7 @@ fn build_query(
                     .collect::<Vec<_>>()
                     .join("_and_")
             );
-            if !order_fields.is_empty() && qtype != QueryType::Count {
+            if !order_fields.is_empty() && qtype != SelectType::Count {
                 post_fix.push_str(&format!(
                     "_order_by_{}",
                     order_fields
@@ -504,23 +504,23 @@ fn build_query(
                 ),
                 None => {
                     match qtype {
-                        QueryType::All => Ident::new(
+                        SelectType::All => Ident::new(
                             &format!("find_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
-                        QueryType::One => Ident::new(
+                        SelectType::One => Ident::new(
                             &format!("find_one_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
-                        QueryType::Page => Ident::new(
+                        SelectType::Page => Ident::new(
                             &format!("find_page_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
-                        QueryType::Stream => Ident::new(
+                        SelectType::Stream => Ident::new(
                             &format!("stream_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
-                        QueryType::Count => Ident::new(
+                        SelectType::Count => Ident::new(
                             &format!("count_{}", post_fix),
                             proc_macro2::Span::call_site(),
                         ),
@@ -578,7 +578,7 @@ fn build_query(
             });
             
             let generated = match qtype {
-                QueryType::All => {
+                SelectType::All => {
                     quote! {
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
                             let sql = #sql;
@@ -592,7 +592,7 @@ fn build_query(
                         }
                     }
                 }
-                QueryType::One => {
+                SelectType::One => {
                     quote! {
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> Result<Option<#struct_name>, sqlx::Error> {
                             let sql = #sql;
@@ -606,7 +606,7 @@ fn build_query(
                         }
                     }
                 }
-                QueryType::Page => {
+                SelectType::Page => {
                     let total_binds_args = by_fields.len();
                     let paging_sql = format!(
                         "{} LIMIT ${} OFFSET ${} ",
@@ -672,7 +672,7 @@ fn build_query(
                         }
                     }
                 }
-                QueryType::Stream => {
+                SelectType::Stream => {
                     quote! {
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> futures::stream::BoxStream<'c, Result<#struct_name, sqlx::Error>> {
                             let sql = #sql;
@@ -685,7 +685,7 @@ fn build_query(
                         }
                     }
                 }
-                QueryType::Count => {
+                SelectType::Count => {
                     quote! {
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> Result<i64, sqlx::Error> {
                             let sql = #count_sql;
