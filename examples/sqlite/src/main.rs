@@ -1,7 +1,7 @@
 
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use sqlx_template::{multi_query, query, select, update, DeleteTemplate, SelectTemplate, TableName, UpdateTemplate};
+use sqlx_template::{insert, multi_query, query, select, update, DeleteTemplate, SelectTemplate, TableName, UpdateTemplate};
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
 use sqlx_template::InsertTemplate;
 
@@ -62,12 +62,26 @@ async fn main() {
     // Insert user
     User::insert(&user_1, &db).await.unwrap();
     User::insert(&user_2, &db).await.unwrap();
+    insert_new_user("user3@abc.com", "password", org_1.id, &db).await.unwrap();
+
+
+    // Query user
+    let users = query_all_user_info("user", 0, &db).await.unwrap();
+    println!("Query Users: {users:#?}");
 
     // Stream all users order by id
+
     let mut users = User::stream_order_by_id_desc(&db);
     while let Some(Ok(u)) = users.next().await {
-        println!("User: {u:#?}");
+        println!("Stream User: {u:#?}");
     }
+
+    // Stream org
+    let mut org_list = query_user_org("user", 0, &db);
+    while let Some(Ok(o)) = org_list.next().await {
+        println!("Steam Org: {o:#?}");
+    }
+    
 
     // Pagination
     let page_request = PageRequest::default();
@@ -223,15 +237,27 @@ pub struct Organization {
 async fn migrate() {}
 
 
+#[insert("INSERT INTO users(email, password, org, active, created_by, updated_by, updated_at) VALUES (:email, :password, :org, true, NULL, NULL, NULL)")]
+async fn insert_new_user(email: &str, password: &str, org: i32) {}
+
 #[select(
     sql = "
     SELECT *
-    FROM user
-    WHERE (name = :name and age = :age) OR name LIKE '%:name%'
+    FROM users
+    WHERE (email = :name and org = :org) OR email LIKE '%' || :name || '%'
 ",
     debug = 100
 )]
-pub async fn query_user_info(name: &str, age: i32) -> Vec<User> {}
+pub async fn query_all_user_info(name: &str, org: i32) -> Vec<User> {}
+
+#[select("
+    SELECT organizations.id, organizations.name
+    FROM organizations
+    JOIN users ON users.org = organizations.id
+    WHERE users.email LIKE '%' || :name || '%'
+    GROUP BY organizations.id
+")]
+pub fn query_user_org(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
 
 
 
