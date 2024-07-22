@@ -24,6 +24,14 @@ enum QueryType {
     Page,
 }
 
+#[derive(PartialEq)]
+enum DataType {
+    Single,
+    Vec,
+    Option,
+    Stream
+}
+
 fn get_query_string(nested_meta: Option<&NestedMeta>) -> syn::Result<String> {
     let res = match nested_meta {
         Some(NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, eq_token}))) => {
@@ -207,16 +215,10 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
     
 
     // Generate bind statement by param extracted from query
-    let binds = params.iter().map(|field| {
-        // param starts with ':'
-        let arg_param = map_args.get(&field[1..]).expect("Ident not found");
-        quote! {
-            .bind(&#arg_param)
-        }
-    });
+
 
     // Extract the return type and determine the SQLx fetch function
-    let (output, fetch_call, return_type, query_type) = match &input.sig.output {
+    let (output, fetch_call, return_type, query_type, data_type) = match &input.sig.output {
         ReturnType::Type(_, ty) => {
             match ty.as_ref() {
                 Type::Path(type_path) => {
@@ -229,7 +231,8 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                                 quote! { Result<Option<#generic>, sqlx::Error> },
                                 quote! { query.fetch_optional(conn).await },
                                 Some(generic),
-                                QueryType::Data
+                                QueryType::Data,
+                                Some(DataType::Option),
                             )
                         },
                         "Vec" => {
@@ -239,16 +242,18 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                                 quote! { Result<Vec<#generic>, sqlx::Error> },
                                 quote! { query.fetch_all(conn).await },
                                 Some(generic),
-                                QueryType::Data
+                                QueryType::Data,
+                                Some(DataType::Vec),
                             )
                         },
                         "Stream" => {
                             let generic = get_nested_type_to_token_stream(&segment.arguments).unwrap();
                             (
-                                quote! { core::result::Result<futures_core::stream::BoxStream<#generic>, sqlx::Error> },
+                                quote! { futures::stream::BoxStream<'c, core::result::Result<#generic, sqlx::Error>> },
                                 quote! { query.fetch(conn) },
                                 Some(generic),
-                                QueryType::Data
+                                QueryType::Data,
+                                Some(DataType::Stream),
                             )
                         },
                         "Scalar" => {
@@ -259,7 +264,8 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                                             quote! { Result<Option<#nested_nested_type>, sqlx::Error> },
                                             quote! { query.fetch_optional(conn).await },
                                             nested_nested_type,
-                                            QueryType::Scalar
+                                            QueryType::Scalar,
+                                            Some(DataType::Option),
                                         )
                                     },
                                     "Vec" => {
@@ -267,15 +273,17 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                                             quote! { Result<Option<#nested_nested_type>, sqlx::Error> },
                                             quote! { query.fetch_all(conn).await },
                                             nested_nested_type,
-                                            QueryType::Scalar
+                                            QueryType::Scalar,
+                                            Some(DataType::Vec),
                                         )
                                     },
                                     "Stream" => {
                                         (
-                                            quote! { core::result::Result<futures_util::stream::BoxStream<#nested_nested_type>, sqlx::Error> },
+                                            quote! { futures::stream::BoxStream<'c, core::result::Result<#nested_nested_type, sqlx::Error>> },
                                             quote! { query.fetch(conn) },
                                             nested_nested_type,
-                                            QueryType::Scalar
+                                            QueryType::Scalar,
+                                            Some(DataType::Stream),
                                         )
                                     },
                                     _ => {
@@ -283,7 +291,8 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                                             quote! { core::result::Result<#nested_type, sqlx::Error> },
                                             quote! { query.fetch_one(conn).await },
                                             Some(nested_type.to_token_stream()),
-                                            QueryType::Scalar
+                                            QueryType::Scalar,
+                                            Some(DataType::Single),
                                         )
                                     }
                                 }
@@ -298,7 +307,8 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                                 quote! { Result<(Vec<#generic>, Option<i64>), sqlx::Error> },
                                 quote! { },
                                 Some(generic),
-                                QueryType::Page
+                                QueryType::Page,
+                                Some(DataType::Single),
                             )
                         }
                         "RowAfftected" => {
@@ -306,7 +316,8 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                                 quote! { core::result::Result<u64, sqlx::Error> },
                                 quote! { query.execute(conn).await },
                                 None,
-                                QueryType::RowAfftected
+                                QueryType::RowAfftected,
+                                Some(DataType::Single),
                             )
                         },
                         _ => {
@@ -318,13 +329,23 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                                         quote! { Result<#ident, sqlx::Error> },
                                         quote! { query.fetch_one(conn).await },
                                         Some(ident.to_token_stream()),
-                                        QueryType::Data
+                                        QueryType::Data,
+                                        Some(DataType::Single),
                                     )
                                 }
                             }
                         }
                     }
                 },
+                Type::Tuple(tuple) => {
+                    (
+                        quote! { Result<#tuple, sqlx::Error> },
+                        quote! { query.fetch_one(conn).await },
+                        Some(tuple.to_token_stream()),
+                        QueryType::Data,
+                        Some(DataType::Single),
+                    )
+                }
                 _ => panic!("Unsupported fetch method for return type")
             }
         },
@@ -333,7 +354,8 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                 quote! { Result<(), sqlx::Error> },
                 quote! { query.execute(conn).await },
                 None,
-                QueryType::Void
+                QueryType::Void,
+                Some(DataType::Single),
             )
         }
     };
@@ -341,32 +363,83 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
     // Choose database by feature
     let database = super::get_database();
 
+    let binds = if data_type == Some(DataType::Stream) {
+        params.iter().map(|field| {
+            // param starts with ':'
+            let arg_param = map_args.get(&field[1..]).expect("Ident not found");
+            quote! {
+                .bind(#arg_param.to_owned())
+            }
+        }).collect::<Vec<_>>()
+    } else {
+        params.iter().map(|field| {
+            // param starts with ':'
+            let arg_param = map_args.get(&field[1..]).expect("Ident not found");
+            quote! {
+                .bind(&#arg_param)
+            }
+        }).collect::<Vec<_>>()
+    };
 
     // Generate the new function with the connection parameter
     let gen = match query_type {
         QueryType::Data => {
-            quote! {
-                pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> #output {
-                    let sql = #sql;
-                    let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
-                    #before
-                    let result = #fetch_call;
-                    #after
-                    Ok(result?)
+            match data_type {
+                Some(DataType::Stream) => {
+                    quote! {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args, conn: E) -> #output {
+                            let sql = #sql;
+                            let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
+                            #before
+                            let result = #fetch_call;
+                            #after
+                            result
+                        }
+                    }
+                }
+                _ => {
+                    quote! {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> #output {
+                            let sql = #sql;
+                            let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
+                            #before
+                            let result = #fetch_call;
+                            #after
+                            Ok(result?)
+                        }
+                    }
                 }
             }
+            
         },
         QueryType::Scalar => {
-            quote! {
-                pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> #output {
-                    let sql = #sql;
-                    let query = sqlx::query_scalar(sql)#(#binds)*;
-                    #before
-                    let result = #fetch_call;
-                    #after
-                    Ok(result?)
+            match data_type {
+                Some(DataType::Stream) => {
+                    quote! {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args, conn: E) -> #output {
+                            let sql = #sql;
+                            let query = sqlx::query_scalar(sql)#(#binds)*;
+                            #before
+                            let result = #fetch_call;
+                            #after
+                            result
+                        }
+                    }
+                }
+                _ => {
+                    quote! {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> #output {
+                            let sql = #sql;
+                            let query = sqlx::query_scalar(sql)#(#binds)*;
+                            #before
+                            let result = #fetch_call;
+                            #after
+                            Ok(result?)
+                        }
+                    }
                 }
             }
+            
         },
         QueryType::RowAfftected => {
             quote! {
@@ -541,6 +614,23 @@ fn get_nested_type(path_arg: &PathArguments) -> Option<(Ident, Option<TokenStrea
             if arg.args.len() == 0 {
                 return None
             }
+
+            // match &arg.args.first() {
+            //     Some(&GenericArgument::Type(Type::Path(ref t))) => {
+            //         if let Some(t) = t.path.segments.first() {
+            //             let nested_type = t.ident.clone();
+            //             let nested_nested_type = get_nested_type_to_token_stream(&t.arguments);
+            //             return Some((nested_type, nested_nested_type));
+            //         } else {
+            //             return None
+            //         }
+            //     }
+            //     Some(&GenericArgument::Type(Type::Tuple(ref t))) => {
+                    
+            //         return Some(t.to_token_stream().into())
+            //     }
+            //     _ => panic!("Invalid generic type 1")
+            // }
             if let Some(&GenericArgument::Type(Type::Path(ref t))) = &arg.args.first() {
                 if let Some(t) = t.path.segments.first() {
                     let nested_type = t.ident.clone();
@@ -548,7 +638,7 @@ fn get_nested_type(path_arg: &PathArguments) -> Option<(Ident, Option<TokenStrea
                     return Some((nested_type, nested_nested_type));
                 }
             }
-            panic!("Invalid generic type")
+            panic!("Invalid generic type 1")
         },
         _ => panic!("Return type must not contain parentheses"),
     };
@@ -564,10 +654,21 @@ fn get_nested_type_to_token_stream(path_arg: &PathArguments) -> Option<TokenStre
             if arg.args.len() == 0 {
                 return None
             }
-            if let Some(&GenericArgument::Type(Type::Path(ref t))) = &arg.args.first() {
-                return Some(t.to_token_stream().into());
+            let first_arg = arg.args.first();
+            match first_arg {
+                Some(&GenericArgument::Type(Type::Path(ref t))) => {
+                    return Some(t.to_token_stream().into())
+                }
+                Some(&GenericArgument::Type(Type::Tuple(ref t))) => {
+                    return Some(t.to_token_stream().into())
+                }
+                _ => panic!("Invalid generic type 2")
             }
-            panic!("Invalid generic type")
+            // ;
+            // if let Some(&GenericArgument::Type(Type::Path(ref t))) = &arg.args.first() {
+            //     return Some(t.to_token_stream().into());
+            // }
+            // panic!("Invalid generic type")
         },
         _ => panic!("Return type must not contain parentheses"),
     };
