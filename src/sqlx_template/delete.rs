@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr,
     Meta, MetaList, MetaNameValue, NestedMeta, Token,
@@ -105,7 +105,11 @@ pub fn derive_delete(ast: DeriveInput) -> syn::Result<TokenStream> {
                     .map(|field| {
                         let arg_name = field.ident.as_ref().unwrap();
                         let arg_type = &field.ty;
-                        quote! { #arg_name: & #arg_type }
+                        if &arg_type.to_token_stream().to_string() == "String" {
+                            quote! { #arg_name: &str }
+                        } else {
+                            quote! { #arg_name: &#arg_type }
+                        }
                     })
                     .collect::<Vec<_>>();
                 let condition = by_fields
