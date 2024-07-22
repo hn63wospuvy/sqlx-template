@@ -387,7 +387,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
             match data_type {
                 Some(DataType::Stream) => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args, conn: E) -> #output {
+                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args, conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
                             #before
@@ -416,7 +416,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
             match data_type {
                 Some(DataType::Stream) => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args, conn: E) -> #output {
+                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args, conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_scalar(sql)#(#binds)*;
                             #before
