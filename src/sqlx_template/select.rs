@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr,
     Meta, MetaList, MetaNameValue, NestedMeta, Token,
@@ -533,7 +533,12 @@ fn build_query(
                 .map(|field| {
                     let arg_name = field.ident.as_ref().unwrap();
                     let arg_type = &field.ty;
-                    quote! { #arg_name: &'c #arg_type }
+                    if &arg_type.to_token_stream().to_string() == "String" {
+                        quote! { #arg_name: &'c str }
+                    } else {
+                        quote! { #arg_name: &'c #arg_type }
+                    }
+                    
                 })
                 .collect::<Vec<_>>();
             
