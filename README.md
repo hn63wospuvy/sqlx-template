@@ -2,6 +2,18 @@
 
 `sqlx-template` is a Rust library designed to generate database query functions using macros, based on the `sqlx` framework. It aims to provide a flexible, simple way to interact with databases such as MySQL, Postgres, and SQLite.
 
+<div align="left">
+  <h4>
+    <a href="https://crates.io/crates/sqlx-template">
+      Crates.io
+    </a>
+    <span> | </span>
+    <a href="https://docs.rs/sqlx-template">
+      Docs.rs
+    </a>
+  </h4>
+</div>
+
 ## Features
 
 - Generate functions for select, insert, update, delete, and order by queries based on fields.
