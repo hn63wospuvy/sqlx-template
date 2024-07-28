@@ -40,15 +40,12 @@ use sqlx_template::{multi_query, query, select, update, DeleteTemplate, SelectTe
 #[debug_slow = 1000]
 #[table_name = "users"]
 #[tp_delete(by = "id")]
-#[tp_delete(by = "id, email")]
 #[tp_select_all(by = "id, email", order = "id desc")]
-#[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
-#[tp_select_one(by = "email")]
+#[tp_select_one(order = "id desc", fn_name = "get_last_inserted")]
 #[tp_select_page(by = "org", order = "id desc, org desc")]
 #[tp_select_count(by = "id, email")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
 #[tp_select_stream(order = "id desc")]
-#[tp_select_stream(by = "email", order = "id desc")]
 pub struct User {
     #[auto]
     id: i32,
@@ -74,6 +71,22 @@ pub async fn query_user_info(name: String, age: i32) -> Stream<(String, i16)> {}
 
 #[multi_query(file = "sql/init.sql", 0)]
 async fn migrate() {}
+
+#[tokio::main]
+async fn main() {
+  let db = SqlitePool::connect(DB_URL).await.unwrap();
+  migrate(&db).await.unwrap();
+  let user = User { email: "foo@bar".into(), password: "123456".into(), ..};
+  let _ = User::insert(&user, &db).await.unwrap();
+  let new_user = User::insert_return(&user, &db).await.unwrap(); // postgres only
+  let mut new_user = User::get_last_inserted(&db).await.unwrap();
+  new_user.password = "aaaa".to_string();
+  User::update(1, &new_user, &db).await.unwrap();
+  let mut stream = User::stream_order_by_id_desc(&db);
+  while let Some(Ok(u)) = stream.next().await {
+      println!("User: {u:?}");
+  }
+}
 ```
 
 For more details, please see the examples in the repository.
