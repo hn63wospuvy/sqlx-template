@@ -82,6 +82,7 @@ pub fn convert_to_count_query(sql: &str, dialect: &dyn Dialect) -> Result<String
                 let Select { projection, .. } = &mut **select;
                 projection.clear();
                 projection.push(COUNT_STMT.clone());
+                query.order_by.clear();
                 Ok(ast[0].to_string())
             } else {
                 Err("Unsupported query type".into())
