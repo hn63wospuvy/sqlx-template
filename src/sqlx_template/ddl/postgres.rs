@@ -19,11 +19,13 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         panic!("DDLTemplate can only be derived for structs");
     };
 
+    let mut primary_keys = Vec::new();
     let columns = fields.named.iter().map(|field| {
         let name = &field.ident;
         let ty = &field.ty;
         let  (mut column_type, nullable) = parse_type(ty);
         let mut default_value = None;
+        
 
         //  #[column(type = "", default = "")]
         for attr in &field.attrs {
@@ -41,6 +43,9 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                                     if let Lit::Str(lit_str) = &nv.lit {
                                         default_value = Some(lit_str.value());
                                     }
+                                }
+                                if nv.path.is_ident("primary") {
+                                    primary_keys.push(name.clone().unwrap().to_string());
                                 }
                                 // TODO: support collation
                             }
@@ -64,11 +69,16 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         .collect::<Vec<_>>()
         .join(", ")
         ;
-
+    let primary_key_def = if !primary_keys.is_empty() {
+        format!(", PRIMARY KEY({})", primary_keys.join(", "))
+    } else {
+        String::new()
+    };
     let create_sql = format!(
-        "CREATE TABLE IF NOT EXISTS {} ({})",
+        "CREATE TABLE IF NOT EXISTS {} ({}){}",
         table_name,
-        columns
+        columns,
+        primary_key_def
     );
 
     let drop_sql = format!(
