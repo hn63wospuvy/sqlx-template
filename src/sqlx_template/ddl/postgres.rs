@@ -65,31 +65,52 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         .join(", ")
         ;
 
-    let sql = format!(
-        "CREATE TABLE {} ({})",
+    let create_sql = format!(
+        "CREATE TABLE IF NOT EXISTS {} ({})",
         table_name,
         columns
+    );
+
+    let drop_sql = format!(
+        "DROP TABLE IF EXISTS {}",
+        table_name,
     );
 
 
 
     let database = get_database();
     
-    let function_impl = gen_with_doc(quote! {
+    let create_function_impl = gen_with_doc(quote! {
             pub async fn create_table<'c, E: sqlx::Executor<'c, Database = #database>>( conn: E) -> Result<(), sqlx::Error> {
-                let query = sqlx::query(#sql)
+                let _ = sqlx::query(#create_sql)
                     .execute(conn)
-                    .await;
+                    .await?;
                 Ok(())
             }
     });
 
+
+
+    let recreate_function_impl = gen_with_doc(quote! {
+        pub async fn recreate_table<'c, E: sqlx::Executor<'c, Database = #database> + Copy>( conn: E) -> Result<(), sqlx::Error> {
+            let _ = sqlx::query(#drop_sql)
+                .execute(conn)
+                .await?;
+
+            let _ = sqlx::query(#create_sql)
+            .execute(conn)
+            .await?;
+            Ok(())
+        }
+});
+
     let expanded = quote! {
         impl #struct_name {
 
-            pub const GEN_TABLE_SQL : &str = #sql;
+            pub const GEN_TABLE_SQL : &str = #create_sql;
 
-            #function_impl
+            #create_function_impl
+            #recreate_function_impl
         }
     };
 
