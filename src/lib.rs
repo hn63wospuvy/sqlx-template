@@ -327,6 +327,18 @@ pub fn columns_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
 
 
 
+#[proc_macro_derive(DDLTemplate, attributes(column, table_name))]
+pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match sqlx_template::ddl::derive(input) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+
+
 /// The `TableName` derive macro automatically generates a `table_name` function
 /// for a struct, returning the value specified in the `table_name` attribute.
 ///

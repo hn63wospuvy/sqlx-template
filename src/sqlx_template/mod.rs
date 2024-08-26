@@ -16,6 +16,7 @@ pub mod update;
 pub mod insert;
 pub mod delete;
 pub mod raw;
+pub mod ddl;
 
 
 
