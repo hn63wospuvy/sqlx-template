@@ -93,6 +93,7 @@ fn parse_type(ty: &Type) -> (String, bool) {
         Type::Path(TypePath { path, .. }) => {
             let ident = path.segments.last().unwrap().ident.to_string();
             match ident.as_str() {
+                "bool" => ("bool".to_string(), false),
                 "i16" => ("int2".to_string(), false),
                 "i32" => ("int4".to_string(), false),
                 "i64" => ("int8".to_string(), false),
