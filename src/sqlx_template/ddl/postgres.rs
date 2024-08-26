@@ -1,4 +1,4 @@
-use crate::sqlx_template::{gen_with_doc, get_table_name};
+use crate::sqlx_template::{gen_with_doc, get_database, get_table_name};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
@@ -42,6 +42,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                                         default_value = Some(lit_str.value());
                                     }
                                 }
+                                // TODO: support collation
                             }
                         }
                     }
@@ -72,15 +73,22 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
 
 
-
+    let database = get_database();
+    
     let function_impl = gen_with_doc(quote! {
-            pub const fn create_table_sql() -> &'static str {
-                #sql
+            pub async fn create_table<'c, E: sqlx::Executor<'c, Database = #database>>( conn: E) -> Result<(), sqlx::Error> {
+                let query = sqlx::query(#sql)
+                    .execute(conn)
+                    .await;
+                Ok(())
             }
     });
 
     let expanded = quote! {
         impl #struct_name {
+
+            pub const GEN_TABLE_SQL : &str = #sql;
+
             #function_impl
         }
     };
