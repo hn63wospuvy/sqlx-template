@@ -58,7 +58,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         let nullable_sql = if nullable { "" } else { " NOT NULL" };
 
-            format!("{} {}{}{}", name.clone().unwrap().to_string(), column_type, nullable_sql, default_sql)
+            format!("`{}` {}{}{}", name.clone().unwrap().to_string(), column_type, nullable_sql, default_sql)
     })
         .map(|x| x.to_string())
         .collect::<Vec<_>>()
