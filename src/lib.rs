@@ -315,7 +315,7 @@ pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     .into()
 }
 
-#[proc_macro_derive(Columns)]
+#[proc_macro_derive(Columns, attributes(group))]
 pub fn columns_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match columns::derive(input) {
