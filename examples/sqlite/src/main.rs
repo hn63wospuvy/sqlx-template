@@ -1,7 +1,7 @@
 
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use sqlx_template::{insert, multi_query, query, select, update, DeleteTemplate, SelectTemplate, TableName, UpdateTemplate};
+use sqlx_template::{insert, multi_query, query, select, update, Columns, DeleteTemplate, SelectTemplate, TableName, UpdateTemplate};
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
 use sqlx_template::InsertTemplate;
 
@@ -213,7 +213,7 @@ pub struct Chat {
 }
 
 
-#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
+#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug, Columns)]
 #[table_name = "organizations"]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "code")]
@@ -221,6 +221,8 @@ pub struct Chat {
 pub struct Organization {
     #[auto]
     pub id: i32,
+    #[group = "a"]
+    #[group = "b"]
     pub name: String,
     pub code: String,
     pub image: Option<String>,
