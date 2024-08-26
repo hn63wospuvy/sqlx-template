@@ -65,7 +65,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         ;
 
     let sql = format!(
-        "CREATE TABLE {} ({});",
+        "CREATE TABLE {} ({})",
         table_name,
         columns
     );
@@ -111,7 +111,7 @@ fn parse_type(ty: &Type) -> (String, bool) {
                 }
                 "Option" => {
                     if let Some(inner_ty) = extract_inner_type(ty) {
-                        let data_type = format!("{}[]", parse_type(inner_ty).0);
+                        let data_type = format!("{}", parse_type(inner_ty).0);
                         (data_type, true)
                     } else {
                         panic!("Unsupported Vec type");
