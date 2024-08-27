@@ -505,7 +505,7 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
                             None => String::new(),
                         };
                         let fields = index_fields.join(", ");
-                        let sql = format!("CREATE {unique} {concurrently} INDEX IF NOT EXISTS {index_name} ON {table_name} USING {index_type} ({fields}) {sort} {null_sort} {include} {null_unique} {with} ");
+                        let sql = format!("CREATE {unique} INDEX {concurrently} IF NOT EXISTS {index_name} ON {table_name} USING {index_type} ({fields}) {sort} {null_sort} {include} {null_unique} {with} ");
                         let sql = util::format_sql(sql.as_str(), &DIALECT).unwrap();
                         res.push(sql);
                     }

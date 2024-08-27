@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use proc_macro2::{ TokenStream};
+use proc_macro2::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, ToTokens};
 use rust_format::RustFmt;
