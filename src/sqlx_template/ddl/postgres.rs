@@ -11,6 +11,8 @@ use syn::{
     NestedMeta, Type, TypePath,
 };
 
+use super::do_print_sql;
+
 const DIALECT: PostgreSqlDialect = PostgreSqlDialect {};
 
 pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
@@ -117,6 +119,8 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         table_name, columns, primary_key_def
     );
 
+    let create_sql = util::format_sql(&create_sql, &DIALECT).unwrap();
+
     let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name,);
 
     let database = get_database();
@@ -124,15 +128,23 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let index_creation = indexes
         .iter()
         .map(|query| {
+            let print_stmt = do_print_sql(query);
             quote! {
+                if print_query {
+                    #print_stmt
+                }
                 let _ = sqlx::query(#query).execute(conn).await?;
             }
         })
         .collect::<Vec<_>>();
 
+    let print_stmt = do_print_sql(&create_sql);
     let index_creation_for_recreate = index_creation.clone();
     let create_function_impl = gen_with_doc(quote! {
-        pub async fn create_table<'c, E: sqlx::Executor<'c, Database = #database> + Copy>( conn: E) -> Result<(), sqlx::Error> {
+        pub async fn create_table<'c, E: sqlx::Executor<'c, Database = #database> + Copy>( conn: E, print_query: bool) -> Result<(), sqlx::Error> {
+            if print_query {
+                #print_stmt
+            }
             let _ = sqlx::query(#create_sql)
                 .execute(conn)
                 .await?;
@@ -141,12 +153,19 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         }
     });
 
+    let print_drop_stmt = do_print_sql(&drop_sql);
     let recreate_function_impl = gen_with_doc(quote! {
-            pub async fn recreate_table<'c, E: sqlx::Executor<'c, Database = #database> + Copy>( conn: E) -> Result<(), sqlx::Error> {
+            pub async fn recreate_table<'c, E: sqlx::Executor<'c, Database = #database> + Copy>( conn: E, print_query: bool) -> Result<(), sqlx::Error> {
+                if print_query {
+                    #print_drop_stmt
+                }   
                 let _ = sqlx::query(#drop_sql)
                     .execute(conn)
                     .await?;
 
+                if print_query {
+                    #print_stmt
+                }    
                 let _ = sqlx::query(#create_sql)
                 .execute(conn)
                 .await?;
@@ -316,7 +335,7 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
             let mut raw: Option<String> = None;
             let mut index_name: Option<String> = None;
             let mut with: Option<String> = None;
-            let mut include: Option<String> = None;
+            let mut include: Vec<String> = vec![];
             let mut null_sort = None;
             let mut null_unique = None;
             let mut desc = false;
@@ -332,11 +351,11 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
                                     let mut fields = check_fields(&fields_str, all_fields.to_vec());
                                     fields.sort_by_key(|x| x.ident.clone());
                                     if has_duplicates(&fields) {
-                                        panic!("Found duplicated fields: {:?}", fields_str);
+                                        panic!("#[index]: fields - Found duplicated fields: {:?}", fields_str);
                                     }
                                     if fields.len() != fields_str.len() {
                                         panic!(
-                                            "One of those value is duplicated or not a field in struct: {:?}",
+                                            "#[index]: fields - One of those value is duplicated or not a field in struct: {:?}",
                                             fields_str
                                         );
                                     }
@@ -344,9 +363,7 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
                                         .into_iter()
                                         .map(|x| x.ident.map(|y| y.to_string()).unwrap_or_default())
                                         .collect();
-                                } else {
-                                    panic!("Expected string value by = \"...\"");
-                                }
+                                } 
                             } else if nv.path.is_ident("name") {
                                 if let Lit::Str(lit) = &nv.lit {
                                     let lit = lit.value();
@@ -360,7 +377,23 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
                             } else if nv.path.is_ident("include") {
                                 if let Lit::Str(lit) = &nv.lit {
                                     let lit = lit.value();
-                                    include.replace(lit);
+                                    let fields_str =
+                                        lit.split(',').map(|x| x.trim()).collect::<Vec<_>>();
+                                    let mut fields = check_fields(&fields_str, all_fields.to_vec());
+                                    fields.sort_by_key(|x| x.ident.clone());
+                                    if has_duplicates(&fields) {
+                                        panic!("#[index]: include - Found duplicated fields: {:?}", fields_str);
+                                    }
+                                    if fields.len() != fields_str.len() {
+                                        panic!(
+                                            "#[index]: include - One of those value is duplicated or not a field in struct: {:?}",
+                                            fields_str
+                                        );
+                                    }
+                                    include = fields
+                                        .into_iter()
+                                        .map(|x| x.ident.map(|y| y.to_string()).unwrap_or_default())
+                                        .collect();
                                 }
                             } else if nv.path.is_ident("raw") {
                                 if let Lit::Str(lit) = &nv.lit {
@@ -413,6 +446,10 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
                         _ => {}
                     }
                 }
+                if raw.is_none() && index_fields.is_empty() {
+                    panic!("Either `fields` or `raw` must not be empty");
+                }
+
                 if unique && index_type != IndexType::Btree {
                     panic!("Unique attribute only for btree index");
                 }
@@ -434,7 +471,7 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
                         } else {
                             exist_index_names.push(index_name.clone());
                         }
-                        let sql = format!("CREATE {unique} {concurrently} INDEX {index_name} ON {table_name} {raw}");
+                        let sql = format!("CREATE {unique} {concurrently} INDEX IF NOT EXISTS {index_name} ON {table_name} {raw}");
                         
                         let sql = util::format_sql(sql.as_str(), &DIALECT).unwrap();
                         res.push(sql);
@@ -453,9 +490,9 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
                             Some(with) => format!("WITH ({with})"),
                             None => String::new(),
                         };
-                        let include = match include.as_ref() {
-                            Some(include) => format!("INCLUDE ({include})"),
-                            None => String::new(),
+                        let include = match include.len() {
+                            i if i > 0 => format!("INCLUDE ({})", include.join(", ")),
+                            _ => String::new(),
                         };
                         let sort = if desc { "DESC" } else { "" };
                         let null_sort = match null_sort.as_ref() {
@@ -468,7 +505,7 @@ fn gen_index_query(attrs: &[Attribute], all_fields: &[&Field], table_name: &str)
                             None => String::new(),
                         };
                         let fields = index_fields.join(", ");
-                        let sql = format!("CREATE {unique} {concurrently} INDEX {index_name} ON {table_name} USING {index_type} ({fields}) {sort} {null_sort} {include} {null_unique} {with} ");
+                        let sql = format!("CREATE {unique} {concurrently} INDEX IF NOT EXISTS {index_name} ON {table_name} USING {index_type} ({fields}) {sort} {null_sort} {include} {null_unique} {with} ");
                         let sql = util::format_sql(sql.as_str(), &DIALECT).unwrap();
                         res.push(sql);
                     }
