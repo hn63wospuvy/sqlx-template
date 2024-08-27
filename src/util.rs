@@ -37,6 +37,15 @@ fn get_sample_select_count() -> SelectItem {
     panic!("Failed to get sample select count")
 } 
 
+pub fn format_sql(sql: &str, dialect: &dyn Dialect) -> Result<String, String> {
+    let mut ast = Parser::parse_sql(dialect, sql).map_err(|x| format!("Parse SQL error. May be due to improperly syntax: {sql}"))?;
+    if ast.len() != 1 {
+        return Err("Expected exactly one SQL statement".into());
+    }
+    Ok(ast[0].to_string())
+
+}
+
 pub fn convert_to_page_query(sql: &str, dialect: &dyn Dialect, params: &Vec<String>) -> Result<ValidateQueryResult, String> {
     let mut ast = Parser::parse_sql(dialect, sql).map_err(|x| format!("Parse SQL error. May be due to improperly syntax"))?;
 

@@ -9,7 +9,7 @@ use syn::{
 
 mod sqlx_template;
 mod columns;
-mod parser;
+mod util;
 
 
 
@@ -327,7 +327,7 @@ pub fn columns_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
 
 
 
-#[proc_macro_derive(DDLTemplate, attributes(column, table_name))]
+#[proc_macro_derive(DDLTemplate, attributes(column, table_name, index))]
 pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::ddl::derive(input) {
@@ -632,7 +632,7 @@ pub fn query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 pub fn select(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, Some(parser::Mode::Select)) {
+    match raw::query_derive(input, args, Some(util::Mode::Select)) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -719,7 +719,7 @@ pub fn select(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 pub fn update(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, Some(parser::Mode::Update)) {
+    match raw::query_derive(input, args, Some(util::Mode::Update)) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -810,7 +810,7 @@ pub fn update(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 pub fn insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, Some(parser::Mode::Insert)) {
+    match raw::query_derive(input, args, Some(util::Mode::Insert)) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -903,7 +903,7 @@ pub fn insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 pub fn delete(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, Some(parser::Mode::Delete)) {
+    match raw::query_derive(input, args, Some(util::Mode::Delete)) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
