@@ -1,5 +1,6 @@
 use syn::DeriveInput;
 use proc_macro2::TokenStream;
+use quote::quote;
 
 mod postgres;
 pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
@@ -14,5 +15,29 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         panic!("Database is not supported")
     } else {
         panic!("Unknown database")
+    }
+}
+
+fn do_print_sql(sql: &str) -> TokenStream {
+    let message = format!("[SQLxTemplate] - DDL: {sql} ");
+    if cfg!(feature = "log") {
+        (
+            quote! { 
+                log::debug!(#message); 
+            }
+        )
+        
+    } else if cfg!(feature = "tracing") {
+        (
+            quote! { 
+                tracing::debug!(#message);
+            }
+        )
+    } else {
+        (
+            quote! { 
+                println!(#message);
+            }
+        )
     }
 }
