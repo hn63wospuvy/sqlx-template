@@ -94,29 +94,16 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let insert_collection = if cfg!(feature = "postgres") {
-        let sql_insert_slice = format!(
-            "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
-            table_name, sql_fields, sql_placeholders
-        );
 
-        let field_vars_insert_slice = fields.iter().map(|f| {
-            let name = f;
-            quote! { let mut #name = Vec::new(); }
-        });
+        let num_fields = fields.len();
 
-        let push_value_insert_slice = fields.iter().map(|f| {
-            let name = f;
-            quote! {
-                for record in records.iter() {
-                    #name.push(&record.#name);
-                }
-            }
-        });
-
-        let bind_params_insert_slice = fields.iter().map(|f| {
-            let name = f;
-            quote! { &#name }
-        });
+        let field_idents = fields
+            .iter()
+            .map(|f| {
+                let name = f;
+                quote! { &record.#name }
+            })
+            .collect::<Vec<_>>();
 
         let insert_collection = quote! {
             pub async fn insert_all<'c, E: sqlx::Executor<'c, Database = #database>>(records: &[#struct_name], conn: E) -> Result<u64, sqlx::Error> {
@@ -125,17 +112,35 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
                     return Ok(0);
                 }
 
-                let sql = #sql_insert_slice;
-
-                #(#field_vars_insert_slice)*
-
-                #(#push_value_insert_slice)*
+                let placeholders: Vec<String> = (0..records.len())
+                    .map(|row_idx| {
+                        let row_placeholders: Vec<String> = (1..=#num_fields)
+                            .map(|col_idx| format!("${}", row_idx * #num_fields + col_idx))
+                            .collect();
+                        format!("({})", row_placeholders.join(", "))
+                    })
+                    .collect();
+                eprintln!("placeholders: {:?}", placeholders);
 
                 #dbg_before
-                let result = sqlx::query(&sql)
-                    #(.bind(#bind_params_insert_slice))*
-                    .execute(conn)
-                    .await;
+                let sql = format!(
+                    "INSERT INTO {} ({}) VALUES {}",
+                    #table_name,
+                    #sql_fields,
+                    placeholders.join(", ")
+                );
+
+                eprintln!("query_str: {}", sql);
+
+                let mut query = sqlx::query(&sql);
+
+                for record in records {
+                    eprintln!("binding");
+
+                    query = query #(.bind(#field_idents))*
+                }
+
+                let result = query.execute(conn).await;
                 #dbg_after
 
                 Ok(result?.rows_affected())
