@@ -216,7 +216,7 @@ pub fn get_database() -> TokenStream {
     } else if cfg!(feature = "sqlite") {
         quote! { sqlx::Sqlite }
     } else if cfg!(feature = "mysql") {
-        quote! { sqlx::Mysql }
+        quote! { sqlx::MySql }
     } else if cfg!(feature = "any") {
         quote! { sqlx::Any }
     } else {

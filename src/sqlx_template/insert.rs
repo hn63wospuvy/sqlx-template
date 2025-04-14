@@ -93,9 +93,111 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
         super::gen_with_doc(insert_returning)
     };
 
+    let insert_collection = if cfg!(feature = "postgres") {
+
+        let num_fields = fields.len();
+
+        let field_idents = fields
+            .iter()
+            .map(|f| {
+                let name = f;
+                quote! { &record.#name }
+            })
+            .collect::<Vec<_>>();
+
+        let insert_collection = quote! {
+            pub async fn insert_all<'c, E: sqlx::Executor<'c, Database = #database>>(records: &[#struct_name], conn: E) -> Result<u64, sqlx::Error> {
+
+                if records.is_empty() {
+                    return Ok(0);
+                }
+
+                let placeholders: Vec<String> = (0..records.len())
+                    .map(|row_idx| {
+                        let row_placeholders: Vec<String> = (1..=#num_fields)
+                            .map(|col_idx| format!("${}", row_idx * #num_fields + col_idx))
+                            .collect();
+                        format!("({})", row_placeholders.join(", "))
+                    })
+                    .collect();
+                eprintln!("placeholders: {:?}", placeholders);
+
+                #dbg_before
+                let sql = format!(
+                    "INSERT INTO {} ({}) VALUES {}",
+                    #table_name,
+                    #sql_fields,
+                    placeholders.join(", ")
+                );
+
+                eprintln!("query_str: {}", sql);
+
+                let mut query = sqlx::query(&sql);
+
+                for record in records {
+                    eprintln!("binding");
+
+                    query = query #(.bind(#field_idents))*
+                }
+
+                let result = query.execute(conn).await;
+                #dbg_after
+
+                Ok(result?.rows_affected())
+
+            }
+        };
+        super::gen_with_doc(insert_collection)
+    } else if cfg!(any(feature = "mysql", feature = "sqlite")) {
+        let sql_placeholders_question_mark = format!(
+            "({})",
+            (0..fields.len())
+                .map(|_| "?".to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        let field_idents = fields
+            .iter()
+            .map(|f| {
+                let name = f;
+                quote! { &record.#name }
+            })
+            .collect::<Vec<_>>();
+
+        let insert_collection = quote! {
+             pub async fn insert_all<'c, E: sqlx::Executor<'c, Database = #database >>(records: &[#struct_name], conn: E)-> Result<u64, sqlx::Error> {
+
+                let sql = format!(
+                    "INSERT INTO {} ({}) VALUES {}",
+                    #table_name,
+                    &#sql_fields,
+                    &(0..records.len()).map(|_| #sql_placeholders_question_mark.clone()).collect::<Vec<_>>().join(", "));
+
+
+                let mut query = sqlx::query(&sql);
+                #dbg_before
+                for record in records {
+                    query = query #(.bind(#field_idents))*
+                }
+                let result = query.execute(conn).await;
+                #dbg_after
+
+                Ok(result?.rows_affected())
+            }
+        };
+
+        super::gen_with_doc(insert_collection)
+    } else {
+        panic!("Only support insert_all for postgres, mysql, sqlite");
+    };
+
     #[cfg(not(feature = "postgres"))]
     let insert_returning = quote! {};
-
+    // #[cfg(not(feature = "postgres"))]
+    // let insert_collection = quote! {};
+    // #[cfg(not(feature = "mysql"))]
+    // let insert_collection = quote! {};
     let gen = quote! {
         impl #struct_name {
 
@@ -103,6 +205,7 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
 
             #insert_returning
 
+            #insert_collection
         }
     };
 

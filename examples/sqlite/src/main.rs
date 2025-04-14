@@ -113,7 +113,24 @@ async fn main() {
     let user = User::find_one_by_email(&"user2@abc.com".to_string(), &db).await.unwrap().unwrap();
     println!("User after update: {user:#?}");
 
-
+    //insert_all
+    let user_3 = User {
+        email: format!("user3@abc.com"),
+        password: "password".into(),
+        org: Some(org_1.id),
+        active: true,
+        ..Default::default()
+    };
+    let user_4 = User {
+        email: format!("user4@abc.com"),
+        password: "password".into(),
+        org: Some(org_1.id),
+        active: true,
+        ..Default::default()
+    };
+    let users = &vec![user_3,user_4];
+    let row_effected = User::insert_all(users, &db).await.unwrap();
+    println!("Inserted {row_effected} rows for users");
 }
 
 #[derive(Debug, Clone, Copy)]
