@@ -120,7 +120,6 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
                         format!("({})", row_placeholders.join(", "))
                     })
                     .collect();
-                eprintln!("placeholders: {:?}", placeholders);
 
                 #dbg_before
                 let sql = format!(
@@ -130,13 +129,8 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
                     placeholders.join(", ")
                 );
 
-                eprintln!("query_str: {}", sql);
-
                 let mut query = sqlx::query(&sql);
-
                 for record in records {
-                    eprintln!("binding");
-
                     query = query #(.bind(#field_idents))*
                 }
 
