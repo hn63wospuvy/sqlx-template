@@ -337,6 +337,16 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     .into()
 }
 
+#[proc_macro_derive(UpsertTemplate, attributes(table_name, tp_upsert, debug_slow))]
+pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match sqlx_template::upsert::derive(input) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
 
 
 /// The `TableName` derive macro automatically generates a `table_name` function
