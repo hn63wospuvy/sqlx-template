@@ -332,7 +332,7 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
                 let database = super::get_database();
                 let generated = if return_entity && cfg!(feature = "postgres") {
                     quote! {
-                        pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , re: &#struct_name, conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
+                        pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
                             let sql = #sql_return;
                             #dbg_before
                             let res = sqlx::query_as::<_, #struct_name>(sql)
@@ -345,7 +345,7 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
                     }
                 } else {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , re: &#struct_name, conn: E) -> core::result::Result<u64, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> core::result::Result<u64, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
                             let query = sqlx::query(sql)
