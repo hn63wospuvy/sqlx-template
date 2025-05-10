@@ -247,17 +247,19 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
                     panic!("No set fields remains");
                 }
 
+                let mut not_excluded_fields = by_fields
+                    .iter()
+                    .chain(version_fields.iter())
+                    .map(|x| x.ident.clone().unwrap().to_string())
+                    .collect::<Vec<_>>()
+                    ;
+                
                 let do_update_stmt = if do_nothing {
                     format!("DO NOTHING")
                 } else if on_fields.is_empty() {
                     let mut set_stmt = insert_fields
                         .iter()
-                        .filter(|x| !version_fields
-                            .iter()
-                            .any(|y| 
-                                get_field_name(y) == x.to_string()
-                            )
-                        )
+                        .filter(|x| !not_excluded_fields.contains(&x.to_string()))
                         .map(|x| format!(" {x} = EXCLUDED.{x}"))
                         .collect::<Vec<_>>()
                         ;
@@ -273,12 +275,10 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
                 } else {
                     let mut set_stmt = on_fields
                         .iter()
-                        .filter(|x| !version_fields
-                            .iter()
-                            .any(|y| 
-                                get_field_name(y) == get_field_name(x)
-                            )
-                        )
+                        .filter(|x| {
+                            let name = x.ident.clone().unwrap();
+                            !not_excluded_fields.contains(&name.to_string())
+                        })
                         .map(|x| {
                             let x = get_field_name(x);
                             format!(" {x} = EXCLUDED.{x}")
