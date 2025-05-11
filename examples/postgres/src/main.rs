@@ -28,7 +28,7 @@ async fn main() {
 
     let dsn = format!("postgresql://{USERNAME}:{PASSWORD}@{host}:{port}/{DATABASE}");
 
-    let pool = sqlx::PgPool::connect(&conn_str).await?;
+    let db = sqlx::PgPool::connect(&dsn).await.unwrap();
     migrate(&db).await.unwrap();
 
     let org_1 = Organization { 
