@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use sqlformat::{FormatOptions, Indent};
-use sqlparser::{ast::{Delete, Distinct, Expr, Fetch, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, GroupByExpr, Insert, Join, JoinConstraint, JsonTableColumnErrorHandling, NamedWindowExpr, Offset, OffsetRows, Query, ReplaceSelectItem, Select, SelectItem, SetExpr, Statement, TableFactor, TableVersion, Top, TopQuantity, Value, WildcardAdditionalOptions, WindowFrame, WindowFrameBound, WindowSpec}, dialect::{Dialect, GenericDialect, PostgreSqlDialect}, parser::Parser};
-use std::collections::HashMap;
+use sqlparser::{ast::{Delete, Distinct, Expr, Fetch, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, GroupByExpr, Ident, Insert, Join, JoinConstraint, JsonTableColumnErrorHandling, NamedWindowExpr, Offset, OffsetRows, Query, ReplaceSelectItem, Select, SelectItem, SetExpr, Statement, TableFactor, TableVersion, Top, TopQuantity, Value, WildcardAdditionalOptions, WindowFrame, WindowFrameBound, WindowSpec}, dialect::{Dialect, GenericDialect, PostgreSqlDialect}, parser::Parser};
+use std::collections::{HashMap, HashSet};
 
 
 static COUNT_STMT: Lazy<SelectItem> = Lazy::new(|| get_sample_select_count());
@@ -811,6 +811,218 @@ fn from_expr(expr: &Expr, res: &mut Vec<String>) -> Result<(), String> {
     }
 }
 
+#[derive(Debug, Default)]
+struct ColumnTableList {
+    columns: HashSet<String>,
+    tables: HashSet<String>,
+}
+
+impl ColumnTableList {
+    fn add_columns(&mut self, column: &Ident) -> Result<(), String>{
+        self.columns.insert(column.value.clone());
+        Ok(())
+    }
+
+    fn add_tables(&mut self, ids: &Vec<Ident>) -> Result<(), String> {
+        match ids.len() {
+            0 => Ok(()),
+            1 => self.add_columns(ids.get(0).unwrap()),
+            2 => {
+                let table = ids.get(0).unwrap();
+                let column = ids.get(1).unwrap();
+                self.columns.insert(column.value.clone());
+                self.tables.insert(table.value.clone());
+                Ok(())
+            },
+            _ => Err("Too much CompoundIdentifier".into())
+        }
+    }
+
+    fn check_value(&self, val: &Value) -> Result<(), String> {
+        match val {
+            Value::Placeholder(_) => Err("Placeholder is not allowed".into()),
+            _ => Ok(())
+        }
+    }
+}
+
+fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> Result<(), String> {
+    match expr {
+        Expr::Identifier(x) => Ok(res.add_columns(x)?),
+        Expr::CompoundIdentifier(x) => Ok(res.add_tables(x)?),
+        Expr::JsonAccess { value, path } => extract_columns_and_compound_ids(&**value, res),
+        Expr::CompositeAccess { expr, key } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::IsFalse(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::IsNotFalse(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::IsTrue(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::IsNotTrue(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::IsNull(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::IsNotNull(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::IsUnknown(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::IsNotUnknown(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::IsDistinctFrom(x, y) => {extract_columns_and_compound_ids(&**x, res)?; extract_columns_and_compound_ids(&**y, res)},
+        Expr::IsNotDistinctFrom(x, y) => {extract_columns_and_compound_ids(&**x, res)?; extract_columns_and_compound_ids(&**y, res)},
+        Expr::InList { expr, list, negated } => {
+            extract_columns_and_compound_ids(&**expr, res)?;
+            for e in list {
+                extract_columns_and_compound_ids(e, res)?;
+            }
+            Ok(())
+        },
+        Expr::InSubquery { expr, subquery, negated } => return Err("Subquery is not supported".into()),
+        Expr::InUnnest { expr, array_expr, negated } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**array_expr, res)},
+        Expr::Between { expr, negated, low, high } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**low, res)?; extract_columns_and_compound_ids(&**high, res)},
+        Expr::BinaryOp { left, op, right } => {extract_columns_and_compound_ids(&**left, res)?; extract_columns_and_compound_ids(&**right, res)},
+        Expr::Like { negated, expr, pattern, escape_char } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**pattern, res)},
+        Expr::ILike { negated, expr, pattern, escape_char } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**pattern, res)},
+        Expr::SimilarTo { negated, expr, pattern, escape_char } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**pattern, res)},
+        Expr::RLike { negated, expr, pattern, regexp } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**pattern, res)},
+        Expr::AnyOp { left, compare_op, right } => {extract_columns_and_compound_ids(&**left, res)?; extract_columns_and_compound_ids(&**right, res)},
+        Expr::AllOp { left, compare_op, right } => {extract_columns_and_compound_ids(&**left, res)?; extract_columns_and_compound_ids(&**right, res)},
+        Expr::UnaryOp { op, expr } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::Convert { expr, data_type, charset, target_before_value, styles } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::Cast { kind, expr, data_type, format } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::AtTimeZone { timestamp, time_zone } => {extract_columns_and_compound_ids(&**timestamp, res)?; extract_columns_and_compound_ids(&**time_zone, res)},
+        Expr::Extract { field, expr } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::Ceil { expr, field } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::Floor { expr, field } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::Position { expr, r#in } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**r#in, res)},
+        Expr::Substring { expr, substring_from, substring_for, special } => {
+            extract_columns_and_compound_ids(&**expr, res)?;
+            if let Some(expr) = substring_from {
+                extract_columns_and_compound_ids(&**expr, res)?;
+            }
+            if let Some(expr) = substring_for {
+                extract_columns_and_compound_ids(&**expr, res)?;
+            }
+            Ok(())
+        },
+        Expr::Trim { expr, trim_where, trim_what, trim_characters } => {
+            extract_columns_and_compound_ids(&**expr, res)?;
+            if let Some(expr) = trim_what {
+                extract_columns_and_compound_ids(&**expr, res)?;
+            }
+            Ok(())
+        },
+        Expr::Overlay { expr, overlay_what, overlay_from, overlay_for } => {
+            extract_columns_and_compound_ids(&**expr, res)?;
+            extract_columns_and_compound_ids(&**overlay_what, res)?;
+            extract_columns_and_compound_ids(&**overlay_from, res)?;
+            if let Some(expr) = overlay_for {
+                extract_columns_and_compound_ids(&**expr, res)?;
+            }
+            Ok(())
+        },
+        Expr::Collate { expr, collation } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::Nested(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::Value(x) => res.check_value(x),
+        Expr::IntroducedString { introducer, value } => res.check_value(value),
+        Expr::TypedString { data_type, value } => return Ok(()),
+        Expr::MapAccess { column, keys } => extract_columns_and_compound_ids(&**column, res),
+        Expr::Function(x) => return Err("Function is not supported".into()),
+        Expr::Case { operand, conditions, results, else_result } => {
+            for l2 in conditions {
+                extract_columns_and_compound_ids(l2, res)?;
+            }
+            for l2 in results {
+                extract_columns_and_compound_ids(l2, res)?;
+            }
+            if let Some(l2) = operand {
+                extract_columns_and_compound_ids(&**l2, res)?;
+            }
+            Ok(())
+        },
+        Expr::Exists { subquery, negated } => return Err("Exists is not supported".into()),
+        Expr::Subquery(x) => return Err("Subquery is not supported".into()),
+        Expr::GroupingSets(x) => {
+            for l1 in x {
+                for l2 in l1 {
+                    extract_columns_and_compound_ids(l2, res)?;
+                }
+            }
+            Ok(())
+        },
+        Expr::Cube(x) => {
+            for l1 in x {
+                for l2 in l1 {
+                    extract_columns_and_compound_ids(l2, res)?;
+                }
+            }
+            Ok(())
+        },
+        Expr::Rollup(x) => {
+            for l1 in x {
+                for l2 in l1 {
+                    extract_columns_and_compound_ids(l2, res)?;
+                }
+            }
+            Ok(())
+        },
+        Expr::Tuple(x) => {
+            for l1 in x {
+                extract_columns_and_compound_ids(l1, res)?;
+            }
+            Ok(())
+        },
+        Expr::Struct { values, fields } => {
+            for l1 in values {
+                extract_columns_and_compound_ids(l1, res)?;
+            }
+            Ok(())
+        },
+        Expr::Named { expr, name } => extract_columns_and_compound_ids(&**expr, res),
+        Expr::Dictionary(x) => {
+            for l1 in x {
+                extract_columns_and_compound_ids(&*l1.value, res)?;
+            }
+            Ok(())
+        },
+        Expr::Subscript { expr, subscript } => {
+            extract_columns_and_compound_ids(&**expr, res)?;
+            match &**subscript {
+                sqlparser::ast::Subscript::Index { index } => extract_columns_and_compound_ids(index, res)?,
+                sqlparser::ast::Subscript::Slice { lower_bound, upper_bound, stride } => {
+                    if let Some(expr) = lower_bound {
+                        extract_columns_and_compound_ids(expr, res)?;
+                    }
+                    if let Some(expr) = upper_bound {
+                        extract_columns_and_compound_ids(expr, res)?;
+                    }
+                    if let Some(expr) = stride {
+                        extract_columns_and_compound_ids(expr, res)?;
+                    }
+                    return Ok(())
+                },
+            }
+            Ok(())
+        },
+        Expr::Array(x) => {
+            for l1 in &x.elem {
+                extract_columns_and_compound_ids(l1, res)?;
+            }
+            Ok(())
+        },
+        Expr::Interval(x) => extract_columns_and_compound_ids(x.value.as_ref(), res),
+        Expr::MatchAgainst { columns, match_value, opt_search_modifier } => return Ok(()),
+        Expr::Wildcard => Ok(()),
+        Expr::QualifiedWildcard(x) => Ok(()),
+        Expr::OuterJoin(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::Prior(x) => extract_columns_and_compound_ids(&**x, res),
+        Expr::Lambda(x) => extract_columns_and_compound_ids(x.body.as_ref(), res),
+    }
+}
+
+pub fn get_columns_and_compound_ids(sql: &str, dialect: Box<dyn Dialect>) -> Result<(HashSet<String>, HashSet<String>), String> {
+    
+    let mut p = Parser::new(dialect.as_ref())
+        .try_with_sql(sql)
+        .map_err(|e| format!("Parse SQL error: {e}"))?;
+    let expr = p.parse_expr().map_err(|e| format!("Parse Expr error: {e}"))?;
+    let mut res = ColumnTableList::default();
+    extract_columns_and_compound_ids(&expr, &mut res)?;
+    Ok((res.columns, res.tables))
+}
+
 #[test]
 fn test() {
     let sql = "
@@ -849,6 +1061,31 @@ fn test_query() {
         let dialect = PostgreSqlDialect {}; 
     let ast = Parser::parse_sql(&dialect, sql).unwrap();
     dbg!(ast);
+    
+}
+
+#[test]
+fn test_expr() {
+    let sql = "
+         t.user = :user and EXCLUDED.id > tt.id
+        ";
+    let dialect = PostgreSqlDialect {}; 
+    let res = get_columns_and_compound_ids(sql, Box::new(dialect));
+    dbg!(&res);
+    assert!(res.is_err());
+    
+    let sql = "
+    t.user = 'user' and EXCLUDED.id > tt.id
+    ";
+    let dialect = PostgreSqlDialect {}; 
+    let res = get_columns_and_compound_ids(sql, Box::new(dialect));
+    dbg!(&res);
+    assert!(res.is_ok());
+    let (cols, tables) = res.unwrap();
+    assert!(cols.contains("user"));
+    assert!(cols.contains("id"));
+    assert!(tables.contains("t"));
+    assert!(tables.contains("EXCLUDED"));
     
 }
 
