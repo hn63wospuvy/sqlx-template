@@ -23,7 +23,7 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
     } else {
         panic!("UpdateTemplate macro only works with structs with named fields");
     };
-    let all_fields_name = all_fields.iter().map(|x| get_field_name(x)).collect::<Vec<_>>();
+    let all_columns_name = all_fields.iter().map(|x| get_field_name(x)).collect::<Vec<_>>();
     let mut functions = Vec::new();
     for attr in ast.attrs {
         if let Ok(Meta::List(MetaList {
@@ -40,7 +40,7 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
                 let mut return_entity = false;
                 let mut do_nothing = false;
                 let mut debug_slow = debug_slow.clone();
-                let mut where_stmt = None;
+                let mut where_stmt_str = None;
                 let mut insert_fields = vec![];
                 if let syn::Data::Struct(syn::DataStruct {
                     fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
@@ -123,7 +123,9 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
                             } else if nv.path.is_ident("where") {
                                 if let Lit::Str(lit) = &nv.lit {
                                     let lit = lit.value();
-                                    where_stmt.replace(lit);
+                                    if !lit.trim().is_empty() {
+                                        where_stmt_str.replace(lit);
+                                    }
                                 }
                             } else if nv.path.is_ident("returning") {
                                 if let Lit::Bool(lit) = &nv.lit {
@@ -320,11 +322,11 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
                 let set_stmt = set_stmt.join(", ");
                 let current_idx = set_fields.len();
 
-                let where_stmt = match where_stmt {
+                let where_stmt = match where_stmt_str {
                     Some(sql) => {
                         let (cols, tables) = parser::get_columns_and_compound_ids(&sql, super::get_database_dialect()).unwrap();
                         for col in cols {
-                            if !all_fields_name.contains(&col) {
+                            if !all_columns_name.contains(&col) {
                                 panic!("Invalid where statement: {col} column is not found in field list");
                             }
                         }
@@ -335,7 +337,7 @@ pub fn derive(ast: DeriveInput) -> syn::Result<TokenStream> {
                         }
                         format!("WHERE {sql}")
                     }
-                    None => String::new()
+                    _ => String::new()
                 };
 
                 let sql = format!(

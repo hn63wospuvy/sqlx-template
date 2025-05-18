@@ -5,7 +5,9 @@ use syn::{
     Meta, MetaList, MetaNameValue, NestedMeta, Token,
 };
 
-use super::{get_debug_slow_from_table_scope, get_table_name};
+use crate::parser;
+
+use super::{get_debug_slow_from_table_scope, get_field_name, get_table_name};
 
 pub fn derive_delete(ast: DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
@@ -20,7 +22,7 @@ pub fn derive_delete(ast: DeriveInput) -> syn::Result<TokenStream> {
     } else {
         panic!("DeleteTemplate macro only works with structs with named fields");
     };
-
+    let all_columns_name = all_fields.iter().map(|x| get_field_name(x)).collect::<Vec<_>>();
     let mut functions = Vec::new();
     
     for attr in ast.attrs {
@@ -34,6 +36,7 @@ pub fn derive_delete(ast: DeriveInput) -> syn::Result<TokenStream> {
             let mut fn_name_attr = None;
             let mut return_entity = false;
             let mut debug_slow = debug_slow.clone();
+            let mut where_stmt_str = None;
             if path.is_ident("tp_delete") {
                 for meta in nested {
                     match meta {
@@ -66,6 +69,13 @@ pub fn derive_delete(ast: DeriveInput) -> syn::Result<TokenStream> {
                                     let lit = lit.value();
                                     return_entity = lit;
                                 } 
+                            } else if nv.path.is_ident("where") {
+                                if let Lit::Str(lit) = &nv.lit {
+                                    let lit = lit.value();
+                                    if !lit.trim().is_empty() {
+                                        where_stmt_str.replace(lit);
+                                    }
+                                }
                             } else if nv.path.is_ident("debug") {
                                 if let Lit::Int(lit) = &nv.lit {
                                     let slow_in_ms = lit.base10_parse().expect("Invalid debug value. Must be integer");
@@ -112,7 +122,7 @@ pub fn derive_delete(ast: DeriveInput) -> syn::Result<TokenStream> {
                         }
                     })
                     .collect::<Vec<_>>();
-                let condition = by_fields
+                let mut where_condition = by_fields
                     .iter()
                     .enumerate()
                     .map(|(index, field)| {
@@ -123,8 +133,23 @@ pub fn derive_delete(ast: DeriveInput) -> syn::Result<TokenStream> {
                         )
                     })
                     .collect::<Vec<_>>()
-                    .join(" AND ");
-                let sql = format!("DELETE FROM {} WHERE {}", &table_name, condition);
+                    ;
+                if let Some(where_stmt_str) = where_stmt_str {
+                    let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect()).unwrap();
+                    for col in cols {
+                        if !all_columns_name.contains(&col) {
+                            panic!("Invalid where statement: {col} column is not found in field list");
+                        }
+                    }
+                    for table in tables {
+                        if table != table_name  {
+                            panic!("Invalid where statement: {table} is not allowed. Only {table_name} are permitted.");
+                        }
+                    }
+                    where_condition.push(where_stmt_str);
+                }
+                let mut where_condition =    where_condition.join(" AND ");
+                let sql = format!("DELETE FROM {} WHERE {}", &table_name, where_condition);
                 let binds = by_fields.iter().map(|field| {
                     let arg_name = field.ident.as_ref().unwrap();
                     quote! {

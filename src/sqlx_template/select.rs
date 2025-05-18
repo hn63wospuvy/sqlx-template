@@ -7,6 +7,8 @@ use syn::{
     Meta, MetaList, MetaNameValue, NestedMeta, Token,
 };
 
+use crate::parser;
+
 use super::{get_database, get_table_name};
 
 #[derive(Debug, PartialEq)]
@@ -49,6 +51,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                 let mut order_fields = Vec::new();
                 let mut fn_name = None;
                 let mut debug_slow = debug_slow.clone();
+                let mut where_stmt_str = None;
                 for meta in nested {
                     match meta {
                         NestedMeta::Meta(Meta::NameValue(nv)) => {
@@ -99,6 +102,13 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                                 } else {
                                     panic!("Expected string value fn_name = \"...\"");
                                 }
+                            } else if nv.path.is_ident("where") {
+                                if let Lit::Str(lit) = &nv.lit {
+                                    let lit = lit.value();
+                                    if !lit.trim().is_empty() {
+                                        where_stmt_str.replace(lit);
+                                    }
+                                }
                             } else if nv.path.is_ident("debug") {
                                 if let Lit::Int(lit) = &nv.lit {
                                     let slow_in_ms = lit.base10_parse().expect("Invalid debug value. Must be integer");
@@ -122,6 +132,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                         by_fields,
                         order_fields,
                         fn_name,
+                        where_stmt_str,
                         debug_slow,
                     )?,
                     "tp_select_one" => build_query(
@@ -132,6 +143,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                         by_fields,
                         order_fields,
                         fn_name,
+                        where_stmt_str,
                         debug_slow,
                     )?,
                     "tp_select_page" => build_query(
@@ -142,6 +154,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                         by_fields,
                         order_fields,
                         fn_name,
+                        where_stmt_str,
                         debug_slow,
                     )?,
                     "tp_select_stream" => build_query(
@@ -152,6 +165,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                         by_fields,
                         order_fields,
                         fn_name,
+                        where_stmt_str,
                         debug_slow,
                     )?,
                     "tp_select_count" => build_query(
@@ -162,6 +176,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                         by_fields,
                         order_fields,
                         fn_name,
+                        where_stmt_str,
                         debug_slow,
                     )?,
                     _ => None,
@@ -295,13 +310,14 @@ fn build_query(
     by_fields: Vec<Field>,
     order_fields: Vec<(Field, bool)>,
     fn_name: Option<String>,
+    where_stmt_str: Option<String>,
     debug_slow: Option<i32>,
 ) -> syn::Result<Option<proc_macro2::TokenStream>> {
     let database = super::get_database();
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let all_fields_str = all_fields.iter().filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string()))).collect::<Vec<String>>();
-    let all_fields_str = all_fields_str.join(", ");
-    match (by_fields.is_empty(), order_fields.is_empty()) {
+    let all_fields_str_join = all_fields_str.join(", ");
+    match (by_fields.is_empty() && where_stmt_str.is_none(), order_fields.is_empty()) {
         (true, true) => {
             // Do nothing. Default implemention
         }
@@ -364,7 +380,7 @@ fn build_query(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let sql = format!("SELECT {all_fields_str} FROM {table_name} ORDER BY {order_str}");
+            let sql = format!("SELECT {all_fields_str_join} FROM {table_name} ORDER BY {order_str}");
             let count_sql = format!("SELECT COUNT(1) FROM {table_name} ORDER BY {order_str}");
             let generated = match qtype {
                 SelectType::All => {
@@ -542,7 +558,7 @@ fn build_query(
                 })
                 .collect::<Vec<_>>();
             
-            let condition = by_fields
+            let mut where_condition = by_fields
                 .iter()
                 .enumerate()
                 .map(|(index, field)| {
@@ -553,11 +569,26 @@ fn build_query(
                     )
                 })
                 .collect::<Vec<_>>()
-                .join(" AND ");
+                ;
+            if let Some(where_stmt_str) = where_stmt_str {
+                let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect()).unwrap();
+                for col in cols {
+                    if !all_fields_str.contains(&col) {
+                        panic!("Invalid where statement: {col} column is not found in field list");
+                    }
+                }
+                for table in tables {
+                    if table != table_name {
+                        panic!("Invalid where statement: {table} is not allowed. Only {table_name} are permitted.");
+                    }
+                }
+                where_condition.push(where_stmt_str);
+            }
+            let  where_condition = where_condition.join(" AND ");
 
-            let count_sql = format!("SELECT COUNT(1) FROM {} WHERE {}", &table_name, condition);
+            let count_sql = format!("SELECT COUNT(1) FROM {} WHERE {}", &table_name, where_condition);
             let sql = if order_fields.is_empty() {
-                format!("SELECT {all_fields_str} FROM {} WHERE {}", &table_name, condition)
+                format!("SELECT {all_fields_str_join} FROM {} WHERE {}", &table_name, where_condition)
             } else {
                 let order_str = order_fields
                     .iter()
@@ -572,7 +603,7 @@ fn build_query(
                     .join(", ");
                 format!(
                     "SELECT * FROM {} WHERE {} ORDER BY {}",
-                    &table_name, condition, order_str
+                    &table_name, where_condition, order_str
                 )
             };
             let binds = by_fields.iter().map(|field| {
