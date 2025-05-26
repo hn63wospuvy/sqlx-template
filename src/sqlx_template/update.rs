@@ -1,4 +1,4 @@
-use proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type
@@ -8,8 +8,12 @@ use crate::{parser, sqlx_template::get_field_name};
 
 use super::get_table_name;
 
-pub fn derive_update(ast: DeriveInput) -> syn::Result<TokenStream> {
+pub fn derive_update(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
+    let struct_name = match for_path {
+        Some(path) => quote! {#path},
+        None => quote! {#struct_name},
+    };
     let table_name = get_table_name(&ast);
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
 
@@ -25,7 +29,7 @@ pub fn derive_update(ast: DeriveInput) -> syn::Result<TokenStream> {
 
     let all_columns_name = all_fields.iter().map(|x| get_field_name(x)).collect::<Vec<_>>();
     let mut functions = Vec::new();
-    for attr in ast.attrs {
+    for attr in &ast.attrs {
         if let Ok(Meta::List(MetaList {
             ref path,
             ref nested,
@@ -475,10 +479,23 @@ pub fn derive_update(ast: DeriveInput) -> syn::Result<TokenStream> {
             } 
         } 
     }
-    let expanded = quote! {
-        impl #struct_name {
+    let expanded = match scope {
+        super::Scope::Struct => quote! {
+            impl #struct_name {
+                #(#functions)*
+            }
+        },
+        super::Scope::Mod => quote! {
             #(#functions)*
-        }
+        },
+        super::Scope::NewMod => {
+            let new_mod = super::create_ident(&table_name);
+            quote! {
+                pub mod #new_mod {
+                    #(#functions)*
+                }
+            }
+        },
     };
 
     Ok(expanded.into())

@@ -3,7 +3,7 @@ use std::{
     fmt::format,
 };
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use rust_format::{Formatter, RustFmt};
 use sqlparser::dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect};
@@ -18,12 +18,56 @@ pub mod delete;
 pub mod upsert;
 pub mod raw;
 pub mod ddl;
+pub mod proc;
 
+#[derive(Debug, Default)]
+pub(super) enum Scope {
+    #[default]
+    Struct,
+    Mod,
+    NewMod
+}
 
+pub(super) fn create_ident(name: &str) -> Ident {
+    Ident::new_raw(&name.to_lowercase(), Span::call_site())
+}
+
+pub(super) fn get_scope(ast: &DeriveInput) -> Scope {
+    let mut scopes = ast
+        .attrs
+        .iter()
+        .filter_map(|attr| {
+            if let Ok(Meta::NameValue(MetaNameValue {
+                path,
+                lit: Lit::Str(lit_str),
+                ..
+            })) = attr.parse_meta()
+            {
+                if path.is_ident("tp_scope") {
+                    let scope_str = lit_str.value();
+                    match scope_str.as_str() {
+                        "struct" => Some(Scope::Struct),
+                        "mod" => Some(Scope::Mod),
+                        _ => panic!("Invalid scope: {scope_str}. Only `struct` or `mod` are permitted")
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    match scopes.len() {
+        0 => Scope::default(), // Default is struct scope
+        1 => scopes.pop().unwrap(),
+        _ => panic!("More than one table_name attribute was found"),
+    }
+}
 
 pub fn get_table_name(ast: &DeriveInput) -> String {
     let struct_name = &ast.ident;
-    let table_names = ast
+    let mut table_names = ast
         .attrs
         .iter()
         .filter_map(|attr| {
@@ -46,7 +90,7 @@ pub fn get_table_name(ast: &DeriveInput) -> String {
         .collect::<Vec<_>>();
     match table_names.len() {
         0 => panic!("table_name attribute not found"),
-        1 => table_names.first().unwrap().to_owned(),
+        1 => table_names.pop().unwrap(),
         _ => panic!("More than one table_name attribute was found"),
     }
 }

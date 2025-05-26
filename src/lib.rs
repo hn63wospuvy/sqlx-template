@@ -3,8 +3,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use sqlx_template::raw;
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, Meta,
-    MetaNameValue, NestedMeta,
+    parse_macro_input, Attribute, AttributeArgs, Data, DeriveInput, Field, Fields, Ident, ItemStruct, Lit, Meta, MetaNameValue, NestedMeta
 };
 
 mod sqlx_template;
@@ -71,7 +70,7 @@ mod parser;
 #[proc_macro_derive(InsertTemplate, attributes(table_name, auto, debug_slow))]
 pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::insert::derive_insert(input) {
+    match sqlx_template::insert::derive_insert(&input, None, sqlx_template::Scope::Struct) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -132,7 +131,7 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 #[proc_macro_derive(UpdateTemplate, attributes(table_name, tp_update, debug_slow))]
 pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::update::derive_update(input) {
+    match sqlx_template::update::derive_update(&input, None, sqlx_template::Scope::Struct) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -204,7 +203,7 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 #[proc_macro_derive(DeleteTemplate, attributes(table_name, tp_delete, debug_slow))]
 pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::delete::derive_delete(input) {
+    match sqlx_template::delete::derive_delete(&input, None, sqlx_template::Scope::Struct) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -308,7 +307,18 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 #[proc_macro_derive(SelectTemplate, attributes(table_name, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count))]
 pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::select::derive_select(input) {
+    match sqlx_template::select::derive_select(&input, None, sqlx_template::Scope::Struct) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+#[proc_macro_attribute]
+pub fn tp_proc(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::DeriveInput);
+    let args = parse_macro_input!(args as AttributeArgs);
+    match sqlx_template::proc::proc_gen(input, args) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -340,7 +350,7 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro_derive(UpsertTemplate, attributes(table_name, tp_upsert, debug_slow))]
 pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::upsert::derive(input) {
+    match sqlx_template::upsert::derive(&input, None, sqlx_template::Scope::Struct) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -918,4 +928,18 @@ pub fn delete(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
         Err(err) => err.to_compile_error().into(),
     }
     .into()
+}
+
+fn convert_to_derive_input(item: ItemStruct) -> DeriveInput {
+    DeriveInput {
+        attrs: item.attrs,
+        vis: item.vis,
+        ident: item.ident,
+        generics: item.generics,
+        data: syn::Data::Struct(syn::DataStruct {
+            struct_token: item.struct_token,
+            fields: item.fields,
+            semi_token: item.semi_token,
+        }),
+    }
 }

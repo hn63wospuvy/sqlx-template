@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr,
@@ -9,7 +9,7 @@ use syn::{
 
 use crate::parser;
 
-use super::{get_database, get_table_name};
+use super::{get_database, get_table_name, Scope};
 
 #[derive(Debug, PartialEq)]
 enum SelectType {
@@ -20,8 +20,12 @@ enum SelectType {
     Count,
 }
 
-pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
+pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
+    let struct_name = match for_path {
+        Some(path) => quote! {#path},
+        None => quote! {#struct_name},
+    };
     let table_name = get_table_name(&ast);
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
@@ -34,7 +38,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
         panic!("SelectTemplate macro only works with structs with named fields");
     };
     let mut functions = Vec::new();
-    for attr in ast.attrs {
+    for attr in &ast.attrs {
         if let Ok(Meta::List(MetaList {
             ref path,
             ref nested,
@@ -126,7 +130,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                 let generated = match path.get_ident().unwrap().to_string().as_str() {
                     "tp_select_all" => build_query(
                         SelectType::All,
-                        struct_name,
+                        &struct_name,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -137,7 +141,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                     )?,
                     "tp_select_one" => build_query(
                         SelectType::One,
-                        struct_name,
+                        &struct_name,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -148,7 +152,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                     )?,
                     "tp_select_page" => build_query(
                         SelectType::Page,
-                        struct_name,
+                        &struct_name,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -159,7 +163,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                     )?,
                     "tp_select_stream" => build_query(
                         SelectType::Stream,
-                        struct_name,
+                        &struct_name,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -170,7 +174,7 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
                     )?,
                     "tp_select_count" => build_query(
                         SelectType::Count,
-                        struct_name,
+                        &struct_name,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -191,17 +195,31 @@ pub fn derive_select(ast: DeriveInput) -> syn::Result<TokenStream> {
     functions.push(super::gen_with_doc(build_default_find_all_query(&struct_name, &table_name, debug_slow, &all_fields)));
     functions.push(super::gen_with_doc(build_default_count_all_query(&struct_name, &table_name, debug_slow)));
     functions.push(super::gen_with_doc(build_default_find_page_all_query(&struct_name, &table_name, debug_slow, &all_fields)));
-    let expanded = quote! {
-        impl #struct_name {
+    
+    let expanded = match scope {
+        super::Scope::Struct => quote! {
+            impl #struct_name {
+                #(#functions)*
+            }
+        },
+        super::Scope::Mod => quote! {
             #(#functions)*
-        }
+        },
+        super::Scope::NewMod => {
+            let new_mod = super::create_ident(&table_name);
+            quote! {
+                pub mod #new_mod {
+                    #(#functions)*
+                }
+            }
+        },
     };
 
     Ok(expanded.into())
 }
 
 fn build_default_find_all_query(
-    struct_name: &Ident,
+    struct_name: &proc_macro2::TokenStream,
     table_name: &str,
     debug_slow: Option<i32>,
     all_fields: &Vec<&Field>,
@@ -226,7 +244,7 @@ fn build_default_find_all_query(
 }
 
 fn build_default_find_page_all_query(
-    struct_name: &Ident,
+    struct_name: &proc_macro2::TokenStream,
     table_name: &str,
     debug_slow: Option<i32>,
     all_fields: &Vec<&Field>,
@@ -281,7 +299,7 @@ fn build_default_find_page_all_query(
 }
 
 fn build_default_count_all_query(
-    struct_name: &Ident,
+    struct_name: &proc_macro2::TokenStream,
     table_name: &str,
     debug_slow: Option<i32>,
 ) -> proc_macro2::TokenStream {
@@ -304,7 +322,7 @@ fn build_default_count_all_query(
 
 fn build_query(
     qtype: SelectType,
-    struct_name: &Ident,
+    struct_name: &proc_macro2::TokenStream,
     table_name: &str,
     all_fields: &Vec<&Field>,
     by_fields: Vec<Field>,

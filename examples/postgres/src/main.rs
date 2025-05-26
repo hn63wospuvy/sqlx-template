@@ -1,7 +1,7 @@
 
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use sqlx_template::{insert, multi_query, query, select, update, Columns, DeleteTemplate, UpsertTemplate, SelectTemplate, TableName, UpdateTemplate};
+use sqlx_template::{insert, multi_query, query, select, update, Columns, DeleteTemplate, SelectTemplate, UpsertTemplate, TableName, UpdateTemplate};
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
 use sqlx_template::InsertTemplate;
 
@@ -29,6 +29,7 @@ async fn main() {
     let dsn = format!("postgresql://{USERNAME}:{PASSWORD}@{host}:{port}/{DATABASE}");
 
     let db = sqlx::PgPool::connect(&dsn).await.unwrap();
+    println!("Setup db done");
     migrate(&db).await.unwrap();
 
     let org_1 = Organization { 
@@ -64,8 +65,6 @@ async fn main() {
     // Insert user
     User::insert(&user_1, &db).await.unwrap();
     User::insert(&user_2, &db).await.unwrap();
-    User::upsert_by_id(&user_2, &db).await.unwrap();
-    User::upsert_2(&user_2, &db).await.unwrap();
     insert_new_user("user3@abc.com", "password", org_1.id, &db).await.unwrap();
 
 
@@ -112,6 +111,8 @@ async fn main() {
     user.updated_at = Some(Utc::now());
     user.updated_by = Some("abc".into());
     User::update_user(&user.id, &user, &mut *tx).await.unwrap();
+
+    User::upsert_by_email(&user,  &mut *tx).await.unwrap();
     tx.commit().await.unwrap();
 
     let user = User::find_one_by_email(&"user2@abc.com".to_string(), &db).await.unwrap().unwrap();
@@ -172,9 +173,9 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, UpsertTemplate, FromRow, TableName, Default, Clone, Debug)]
 #[debug_slow = 1000]
 #[table_name = "users"]
+#[tp_upsert(by = "id")]
+#[tp_upsert(by = "email")]
 #[tp_delete(by = "id")]
-#[tp_upsert(by = "id", where = "id > 1")]
-#[tp_upsert(by = "id", where = "EXCLUDED.org > org", fn_name = "upsert_2")]
 #[tp_delete(by = "id, email")]
 #[tp_select_all(by = "id, email", order = "id desc")]
 #[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
@@ -201,11 +202,13 @@ pub struct User {
 
 
 
-#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
+#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, UpsertTemplate, FromRow, TableName, Default, Clone, Debug)]
 #[debug_slow = 1000]
 #[table_name = "chats"]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "id, sender", order = "id desc")]
+#[tp_upsert(by = "id")]
+#[tp_upsert(by = "id", on = "sender, content", fn_name = "test1")]
 pub struct Chat {
     #[auto]
     pub id: i32,
