@@ -315,7 +315,7 @@ pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 }
 
 #[proc_macro_attribute]
-pub fn tp_proc(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+pub fn tp_gen(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::DeriveInput);
     let args = parse_macro_input!(args as AttributeArgs);
     match sqlx_template::proc::proc_gen(input, args) {
