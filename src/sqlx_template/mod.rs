@@ -11,6 +11,8 @@ use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type
 };
 
+use crate::delete;
+
 pub mod select;
 pub mod update;
 pub mod insert;
@@ -20,7 +22,7 @@ pub mod raw;
 pub mod ddl;
 pub mod proc;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub(super) enum Scope {
     #[default]
     Struct,
@@ -238,7 +240,7 @@ fn gen_debug_code(debug_slow: Option<i32>) -> (TokenStream, TokenStream) {
 
 
 
-pub fn table_name_derive(ast: DeriveInput) -> syn::Result<TokenStream> {
+pub fn table_name_derive(ast: &DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
 
     let table_name = get_table_name(&ast);
@@ -323,3 +325,20 @@ pub fn has_duplicates(vec: &Vec<Field>) -> bool {
     false
 }
 
+pub fn derive_all(input: &DeriveInput, for_path: Option<&syn::Path>, scope: Scope) -> syn::Result<TokenStream> {
+    let table_name = table_name_derive(&input)?;
+    let insert = insert::derive_insert(&input, for_path, scope)?;
+    let update = update::derive_update(&input, for_path, scope)?;
+    let select = select::derive_select(&input, for_path, scope)?;
+    let delete = delete::derive_delete(&input, for_path, scope)?;
+    let upsert = upsert::derive(&input, for_path, scope)?;
+
+    Ok(quote! {
+        #table_name
+        #insert
+        #update
+        #select
+        #delete
+        #upsert
+    })
+}

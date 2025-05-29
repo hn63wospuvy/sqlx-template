@@ -314,16 +314,7 @@ pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     .into()
 }
 
-#[proc_macro_attribute]
-pub fn tp_gen(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
-    let input = syn::parse_macro_input!(item as syn::DeriveInput);
-    let args = parse_macro_input!(args as AttributeArgs);
-    match sqlx_template::proc::proc_gen(input, args) {
-        Ok(ok) => ok,
-        Err(err) => err.to_compile_error().into(),
-    }
-    .into()
-}
+
 
 #[proc_macro_derive(Columns, attributes(group))]
 pub fn columns_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -357,6 +348,27 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     .into()
 }
 
+#[proc_macro_derive(SqlxTemplate, attributes(table_name, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+
+#[proc_macro_attribute]
+pub fn tp_gen(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::DeriveInput);
+    let args = parse_macro_input!(args as AttributeArgs);
+    match sqlx_template::proc::proc_gen(input, args) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
 
 
 /// The `TableName` derive macro automatically generates a `table_name` function
@@ -396,7 +408,7 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 #[proc_macro_derive(TableName, attributes(table_name))]
 pub fn table_name_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::table_name_derive(input) {
+    match sqlx_template::table_name_derive(&input) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
