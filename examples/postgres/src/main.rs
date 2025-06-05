@@ -203,25 +203,6 @@ pub struct User {
 
 
 
-#[derive(SqlxTemplate, FromRow, Default, Clone, Debug)]
-#[debug_slow = 1000]
-#[database = "postgres"]
-#[table_name = "chats"]
-#[tp_delete(by = "id")]
-#[tp_select_one(by = "id, sender", order = "id desc")]
-#[tp_upsert(by = "id")]
-#[tp_upsert(by = "id", on = "sender, content", fn_name = "test1")]
-pub struct Chat {
-    #[auto]
-    pub id: i32,
-    pub sender: i32,
-    pub receiver: i32,
-    pub content: String,
-    pub active: bool,
-    pub created_by: Option<String>,
-    #[auto]
-    pub created_at: DateTime<Utc>,
-}
 
 
 #[derive(SqlxTemplate, FromRow, Default, Clone, Debug, Columns)]

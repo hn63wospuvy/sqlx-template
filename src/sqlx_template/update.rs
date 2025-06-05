@@ -306,6 +306,10 @@ pub fn derive_update(
                             }
                         }
                         if !par_res.placeholder_vars.is_empty() {
+                            let all_fields_map = all_fields
+                                .iter()
+                                .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                                .collect::<HashMap<_, _>>();
                             let by_fields_map = by_fields
                                 .iter()
                                 .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
@@ -314,25 +318,36 @@ pub fn derive_update(
                                 .placeholder_vars
                                 .iter()
                                 .filter_map(|p| {
-                                    if all_columns_name.contains(p) {
+                                    let p = &p[1..];
+                                    if !all_fields_map.contains_key(p) {
                                         panic!("Field {p} is not found in list columns name");
                                     }
-                                    by_fields_map.get(p).map(|field| {
+
+                                    all_fields_map.get(p).map(|field| {
                                         let arg_name = field.ident.as_ref().unwrap();
                                         let arg_type = &field.ty;
-                                        if &arg_type.to_token_stream().to_string() == "String" {
+                                        if by_fields_map.contains_key(p) {
                                             (
                                                 quote! {
                                                     .bind(&#arg_name)
                                                 },
-                                                quote! { #arg_name: &str },
+                                                None,
+                                            )
+                                        } else if &arg_type.to_token_stream().to_string()
+                                            == "String"
+                                        {
+                                            (
+                                                quote! {
+                                                    .bind(&#arg_name)
+                                                },
+                                                Some(quote! { #arg_name: &str }),
                                             )
                                         } else {
                                             (
                                                 quote! {
                                                     .bind(&#arg_name)
                                                 },
-                                                quote! { #arg_name: &#arg_type },
+                                                Some(quote! { #arg_name: &#arg_type }),
                                             )
                                         }
                                     })
@@ -340,9 +355,11 @@ pub fn derive_update(
                                 .collect::<Vec<_>>();
                             let (mut bind_vec, mut args_vec) =
                                 extend_fields.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
+                            let mut args_vec =
+                                args_vec.into_iter().filter_map(|x| x).collect::<Vec<_>>();
                             fn_args.append(&mut args_vec);
                             binds.append(&mut bind_vec);
-                            let start_counter = by_fields.len();
+                            let start_counter = by_fields.len() + 1;
                             let (sql, params) = parser::replace_placeholder(
                                 &where_stmt_str,
                                 par_res.placeholder_vars,
@@ -363,7 +380,6 @@ pub fn derive_update(
                         "UPDATE {} SET {} WHERE {} RETURNING *",
                         table_name, set_stmt, where_stmt
                     );
-                    
 
                     let binds_return = binds.clone();
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);

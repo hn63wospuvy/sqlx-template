@@ -846,7 +846,7 @@ impl ColumnTableList {
                 if !p.starts_with(":") {
                     return Err("Placeholder {} is not valid. Must start with ':'".into());
                 }
-                self.placeholder_vars.push(p.clone());
+                self.placeholder_vars.push((&p).to_string());
             },
             _ => {}
         };
@@ -1089,11 +1089,11 @@ fn test_expr() {
     let res = get_columns_and_compound_ids(sql, Box::new(dialect));
     dbg!(&res);
     assert!(res.is_ok());
-    let (cols, tables) = res.unwrap();
-    assert!(cols.contains("user"));
-    assert!(cols.contains("id"));
-    assert!(tables.contains("t"));
-    assert!(tables.contains("EXCLUDED"));
+    let res = res.unwrap();
+    assert!(res.columns.contains("user"));
+    assert!(res.columns.contains("id"));
+    assert!(res.tables.contains("t"));
+    assert!(res.tables.contains("EXCLUDED"));
     
 }
 
