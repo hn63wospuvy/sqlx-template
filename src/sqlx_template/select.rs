@@ -7,9 +7,9 @@ use syn::{
     Meta, MetaList, MetaNameValue, NestedMeta, Token,
 };
 
-use crate::parser;
+use crate::{parser, sqlx_template::{get_database_from_ast, Database}};
 
-use super::{get_database, get_table_name, Scope};
+use super::{get_database_type, get_table_name, Scope};
 
 #[derive(Debug, PartialEq)]
 enum SelectType {
@@ -20,13 +20,14 @@ enum SelectType {
     Count,
 }
 
-pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope) -> syn::Result<TokenStream> {
+pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
     let struct_name = match for_path {
         Some(path) => quote! {#path},
         None => quote! {#struct_name},
     };
     let table_name = get_table_name(&ast);
+    let db = db.unwrap_or(get_database_from_ast(&ast));
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
@@ -138,6 +139,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
+                        db
                     )?,
                     "tp_select_one" => build_query(
                         SelectType::One,
@@ -149,6 +151,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
+                        db
                     )?,
                     "tp_select_page" => build_query(
                         SelectType::Page,
@@ -160,6 +163,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
+                        db
                     )?,
                     "tp_select_stream" => build_query(
                         SelectType::Stream,
@@ -171,6 +175,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
+                        db
                     )?,
                     "tp_select_count" => build_query(
                         SelectType::Count,
@@ -182,6 +187,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
+                        db
                     )?,
                     _ => None,
                 };
@@ -192,9 +198,9 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
             }
         }
     }
-    functions.push(super::gen_with_doc(build_default_find_all_query(&struct_name, &table_name, debug_slow, &all_fields)));
-    functions.push(super::gen_with_doc(build_default_count_all_query(&struct_name, &table_name, debug_slow)));
-    functions.push(super::gen_with_doc(build_default_find_page_all_query(&struct_name, &table_name, debug_slow, &all_fields)));
+    functions.push(super::gen_with_doc(build_default_find_all_query(&struct_name, &table_name, debug_slow, &all_fields, db)));
+    functions.push(super::gen_with_doc(build_default_count_all_query(&struct_name, &table_name, debug_slow, db)));
+    functions.push(super::gen_with_doc(build_default_find_page_all_query(&struct_name, &table_name, debug_slow, &all_fields, db)));
     
     let expanded = match scope {
         super::Scope::Struct => quote! {
@@ -223,11 +229,12 @@ fn build_default_find_all_query(
     table_name: &str,
     debug_slow: Option<i32>,
     all_fields: &Vec<&Field>,
+    db: Database,
 ) -> proc_macro2::TokenStream {
     let all_fields_str = all_fields.iter().filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string()))).collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
     let sql = format!("SELECT {all_fields_str} FROM {table_name}");
-    let database = super::get_database();
+    let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let expanded = quote! {
         pub async fn find_all<'c, E: sqlx::Executor<'c, Database = #database>>( conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
@@ -248,8 +255,9 @@ fn build_default_find_page_all_query(
     table_name: &str,
     debug_slow: Option<i32>,
     all_fields: &Vec<&Field>,
+    db: Database,
 ) -> proc_macro2::TokenStream {
-    let database = super::get_database();
+    let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let all_fields_str = all_fields.iter().filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string()))).collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
@@ -302,9 +310,10 @@ fn build_default_count_all_query(
     struct_name: &proc_macro2::TokenStream,
     table_name: &str,
     debug_slow: Option<i32>,
+    db: Database,
 ) -> proc_macro2::TokenStream {
     let sql = format!("SELECT COUNT(1) FROM {table_name}");
-    let database = super::get_database();
+    let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let expanded = quote! {
         pub async fn count_all<'c, E: sqlx::Executor<'c, Database = #database>>( conn: E) -> Result<i64, sqlx::Error> {
@@ -330,8 +339,9 @@ fn build_query(
     fn_name: Option<String>,
     where_stmt_str: Option<String>,
     debug_slow: Option<i32>,
+    db: Database,
 ) -> syn::Result<Option<proc_macro2::TokenStream>> {
-    let database = super::get_database();
+    let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let all_fields_str = all_fields.iter().filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string()))).collect::<Vec<String>>();
     let all_fields_str_join = all_fields_str.join(", ");
@@ -589,7 +599,7 @@ fn build_query(
                 .collect::<Vec<_>>()
                 ;
             if let Some(where_stmt_str) = where_stmt_str {
-                let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect()).unwrap();
+                let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect(db)).unwrap();
                 for col in cols {
                     if !all_fields_str.contains(&col) {
                         panic!("Invalid where statement: {col} column is not found in field list");

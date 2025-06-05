@@ -4,9 +4,11 @@ use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, Path, Token
 };
 
+use crate::sqlx_template::{get_database_from_ast, Database};
+
 use super::{get_table_name, Scope};
 
-pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope) -> syn::Result<TokenStream> {
+pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
     let struct_name = match for_path {
         Some(path) => quote! {#path},
@@ -35,6 +37,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope) -
     }
 
     let table_name = get_table_name(&ast);
+    let db = db.unwrap_or(get_database_from_ast(&ast));
     let sql_fields = fields
         .iter()
         .map(|f| f.to_string())
@@ -62,7 +65,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope) -
 
     let binds_return = binds.clone();
 
-    let database = super::get_database();
+    let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let insert = quote! {
         pub async fn insert<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> Result<u64, sqlx::Error> {
@@ -78,8 +81,8 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope) -
     };
     let insert = super::gen_with_doc(insert);
 
-    #[cfg(feature = "postgres")]
-    let insert_returning = {
+    
+    let insert_returning = if matches!(db, Database::Postgres) {
         let insert_returning = quote! {
             pub async fn insert_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> Result<#struct_name, sqlx::Error> {
                 let sql = #sql_return;
@@ -93,10 +96,10 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope) -
             }
         };
         super::gen_with_doc(insert_returning)
+    } else {
+        quote! {}
     };
 
-    #[cfg(not(feature = "postgres"))]
-    let insert_returning = quote! {};
 
     let gen = match scope {
         Scope::Struct => quote! {

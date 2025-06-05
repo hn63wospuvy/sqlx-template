@@ -1,4 +1,4 @@
-use crate::sqlx_template::{gen_with_doc, get_database, get_table_name};
+use crate::sqlx_template::{gen_with_doc, get_database_type, get_table_name, Database};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
@@ -88,7 +88,7 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
 
 
-    let database = get_database();
+    let database = get_database_type(Database::Postgres);
     
     let create_function_impl = gen_with_doc(quote! {
             pub async fn create_table<'c, E: sqlx::Executor<'c, Database = #database>>( conn: E) -> Result<(), sqlx::Error> {

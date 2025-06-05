@@ -6,6 +6,8 @@ use syn::{
     parse_macro_input, Attribute, AttributeArgs, Data, DeriveInput, Field, Fields, Ident, ItemStruct, Lit, Meta, MetaNameValue, NestedMeta
 };
 
+use crate::sqlx_template::Database;
+
 mod sqlx_template;
 mod columns;
 mod parser;
@@ -67,10 +69,10 @@ mod parser;
 ///
 
 
-#[proc_macro_derive(InsertTemplate, attributes(table_name, auto, debug_slow))]
+#[proc_macro_derive(InsertTemplate, attributes(table_name, auto, debug_slow, database))]
 pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::insert::derive_insert(&input, None, sqlx_template::Scope::Struct) {
+    match sqlx_template::insert::derive_insert(&input, None, sqlx_template::Scope::Struct, None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -128,10 +130,10 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// This macro relies on `sqlx`, so you need to add `sqlx` to your `[dependencies]` in `Cargo.toml`
 /// and properly configure the database connection before using the generated update methods.
 
-#[proc_macro_derive(UpdateTemplate, attributes(table_name, tp_update, debug_slow))]
+#[proc_macro_derive(UpdateTemplate, attributes(table_name, tp_update, debug_slow, database))]
 pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::update::derive_update(&input, None, sqlx_template::Scope::Struct) {
+    match sqlx_template::update::derive_update(&input, None, sqlx_template::Scope::Struct, None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -200,10 +202,10 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated delete methods.
 ///
 
-#[proc_macro_derive(DeleteTemplate, attributes(table_name, tp_delete, debug_slow))]
+#[proc_macro_derive(DeleteTemplate, attributes(table_name, tp_delete, debug_slow, database))]
 pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::delete::derive_delete(&input, None, sqlx_template::Scope::Struct) {
+    match sqlx_template::delete::derive_delete(&input, None, sqlx_template::Scope::Struct, None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -304,10 +306,10 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated query methods.
 ///
 
-#[proc_macro_derive(SelectTemplate, attributes(table_name, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count))]
+#[proc_macro_derive(SelectTemplate, attributes(table_name, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, database))]
 pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::select::derive_select(&input, None, sqlx_template::Scope::Struct) {
+    match sqlx_template::select::derive_select(&input, None, sqlx_template::Scope::Struct, None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -328,7 +330,7 @@ pub fn columns_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
 
 
 
-#[proc_macro_derive(DDLTemplate, attributes(column, table_name))]
+#[proc_macro_derive(DDLTemplate, attributes(column, table_name, database))]
 pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::ddl::derive(input) {
@@ -338,20 +340,60 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     .into()
 }
 
-#[proc_macro_derive(UpsertTemplate, attributes(table_name, tp_upsert, debug_slow))]
+#[proc_macro_derive(UpsertTemplate, attributes(table_name, tp_upsert, debug_slow, database))]
 pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::upsert::derive(&input, None, sqlx_template::Scope::Struct) {
+    match sqlx_template::upsert::derive_upsert(&input, None, sqlx_template::Scope::Struct, None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
     .into()
 }
 
-#[proc_macro_derive(SqlxTemplate, attributes(table_name, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+#[proc_macro_derive(SqlxTemplate, attributes(table_name, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, database))]
 pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct) {
+    match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, None) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+#[proc_macro_derive(PostgresTemplate, attributes(table_name, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Postgres)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+#[proc_macro_derive(MysqlTemplate, attributes(table_name, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Mysql)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+#[proc_macro_derive(SqliteTemplate, attributes(table_name, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Sqlite)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+#[proc_macro_derive(AnyTemplate, attributes(table_name, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+pub fn any_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Any)) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -481,12 +523,49 @@ pub fn table_name_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 pub fn multi_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::multi_query_derive(input, args, None) {
+    match raw::multi_query_derive(input, args, None, None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
     .into()
 }
+
+/// Same as [crate::multi_query] proc macro, but specified for Postgres database
+#[proc_macro_attribute]
+pub fn postgres_multi_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::multi_query_derive(input, args, None, Some(Database::Postgres)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::multi_query] proc macro, but specified for MySQL database
+#[proc_macro_attribute]
+pub fn mysql_multi_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::multi_query_derive(input, args, None, Some(Database::Mysql)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::multi_query] proc macro, but specified for SQLite database
+#[proc_macro_attribute]
+pub fn sqlite_multi_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::multi_query_derive(input, args, None, Some(Database::Sqlite)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
 
 
 /// The `query` procedural macro transforms an SQL query with named parameters into
@@ -576,13 +655,49 @@ pub fn multi_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStr
 pub fn query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, None) {
+    match raw::query_derive(input, args, None, None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
     .into()
 }
 
+
+/// Same as [crate::query] proc macro, but specified for Postgres database
+#[proc_macro_attribute]
+pub fn postgres_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, None, Some(Database::Postgres)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::query] proc macro, but specified for MySQL database
+#[proc_macro_attribute]
+pub fn mysql_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, None, Some(Database::Mysql)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::query] proc macro, but specified for SQLite database  
+#[proc_macro_attribute]
+pub fn sqlite_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, None, Some(Database::Sqlite)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
 
 
 /// The `select` procedural macro transforms a SQL query with named parameters into
@@ -664,7 +779,42 @@ pub fn query(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 pub fn select(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, Some(parser::Mode::Select)) {
+    match raw::query_derive(input, args, Some(parser::Mode::Select), None) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::select] proc macro, but specified for Postgres database
+#[proc_macro_attribute]
+pub fn postgres_select(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Select), Some(Database::Postgres)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+/// Same as [crate::select] proc macro, but specified for MySQL database
+#[proc_macro_attribute]
+pub fn mysql_select(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Select), Some(Database::Mysql)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::select] proc macro, but specified for SQLite database
+#[proc_macro_attribute]
+pub fn sqlite_select(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Select), Some(Database::Sqlite)) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -751,7 +901,43 @@ pub fn select(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 pub fn update(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, Some(parser::Mode::Update)) {
+    match raw::query_derive(input, args, Some(parser::Mode::Update), None) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::update] proc macro, but specified for Postgres database
+#[proc_macro_attribute]
+pub fn postgres_update(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Update), Some(Database::Postgres)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::update] proc macro, but specified for MySQL database
+#[proc_macro_attribute]
+pub fn mysql_update(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Update), Some(Database::Mysql)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::update] proc macro, but specified for SQLite database
+#[proc_macro_attribute]
+pub fn sqlite_update(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Update), Some(Database::Sqlite)) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
@@ -842,13 +1028,48 @@ pub fn update(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 pub fn insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, Some(parser::Mode::Insert)) {
+    match raw::query_derive(input, args, Some(parser::Mode::Insert), None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
     .into()
 }
 
+/// Same as [crate::insert] proc macro, but specified for Postgres database
+#[proc_macro_attribute]
+pub fn postgres_insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Insert), Some(Database::Postgres)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::insert] proc macro, but specified for MySQL database
+#[proc_macro_attribute]
+pub fn mysql_insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Insert), Some(Database::Mysql)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+
+/// Same as [crate::insert] proc macro, but specified for SQLite database
+#[proc_macro_attribute]
+pub fn sqlite_insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Insert), Some(Database::Sqlite)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
 
 /// The `delete` procedural macro transforms an SQL `DELETE` query with named parameters into
 /// an asynchronous function that interacts with the database. It provides various
@@ -935,23 +1156,46 @@ pub fn insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 pub fn delete(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemFn);
     let args = syn::parse_macro_input!(args as syn::AttributeArgs);
-    match raw::query_derive(input, args, Some(parser::Mode::Delete)) {
+    match raw::query_derive(input, args, Some(parser::Mode::Delete), None) {
         Ok(ok) => ok,
         Err(err) => err.to_compile_error().into(),
     }
     .into()
 }
 
-fn convert_to_derive_input(item: ItemStruct) -> DeriveInput {
-    DeriveInput {
-        attrs: item.attrs,
-        vis: item.vis,
-        ident: item.ident,
-        generics: item.generics,
-        data: syn::Data::Struct(syn::DataStruct {
-            struct_token: item.struct_token,
-            fields: item.fields,
-            semi_token: item.semi_token,
-        }),
+/// Same as [crate::delete] proc macro, but specified for Postgres database
+#[proc_macro_attribute]
+pub fn postgres_delete(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Delete), Some(Database::Postgres)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(), 
     }
+    .into()
 }
+
+/// Same as [crate::delete] proc macro, but specified for MySQL database
+#[proc_macro_attribute]
+pub fn mysql_delete(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Delete), Some(Database::Mysql)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into() 
+}
+
+/// Same as [crate::delete] proc macro, but specified for SQLite database
+#[proc_macro_attribute] 
+pub fn sqlite_delete(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    match raw::query_derive(input, args, Some(parser::Mode::Delete), Some(Database::Sqlite)) {
+        Ok(ok) => ok,
+        Err(err) => err.to_compile_error().into(),
+    }
+    .into()
+}
+

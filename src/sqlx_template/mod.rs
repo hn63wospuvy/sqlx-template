@@ -6,9 +6,9 @@ use std::{
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use rust_format::{Formatter, RustFmt};
-use sqlparser::dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect};
+use sqlparser::dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use syn::{
-    parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type
+    parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident, ItemFn, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type
 };
 
 use crate::delete;
@@ -28,6 +28,15 @@ pub(super) enum Scope {
     Struct,
     Mod,
     NewMod
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) enum Database {
+    #[default]
+    Postgres,
+    Sqlite,
+    Mysql,
+    Any
 }
 
 pub(super) fn create_ident(name: &str) -> Ident {
@@ -96,6 +105,78 @@ pub fn get_table_name(ast: &DeriveInput) -> String {
         _ => panic!("More than one table_name attribute was found"),
     }
 }
+
+pub fn get_database_from_ast(ast: &DeriveInput) -> Database {
+    if cfg!(feature = "postgres") {
+        return Database::Postgres;
+    } else if cfg!(feature = "sqlite") {
+        return Database::Sqlite;
+    } else if cfg!(feature = "mysql") {
+        return Database::Mysql;
+    } else if cfg!(feature = "any") {
+        return Database::Any;
+    }
+    let struct_name = &ast.ident;
+    let mut dbs = ast
+        .attrs
+        .iter()
+        .filter_map(|attr| {
+            if let Ok(Meta::NameValue(MetaNameValue {
+                path,
+                lit: Lit::Str(lit_str),
+                ..
+            })) = attr.parse_meta()
+            {
+                if path.is_ident("database") {
+                    let name = lit_str.value();
+                    match name.to_lowercase().as_str() {
+                        "postgres" | "postgresql" => Some(Database::Postgres),
+                        "mysql" => Some(Database::Mysql),
+                        "sqlite" => Some(Database::Sqlite),
+                        "any" => Some(Database::Any),
+                        _ => panic!("`database`: {name} is not valid. Valid values: 'postgres', 'mysql', 'sqlite', 'any'")
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    match dbs.len() {
+        0 => panic!("`database` attribute not found. Valid values: 'postgres', 'mysql', 'sqlite', 'any'"),
+        1 => dbs.pop().unwrap(),
+        _ => panic!("More than one database attribute was found"),
+    }
+}
+
+pub fn get_database_from_input_fn(input: &ItemFn) -> Database {
+    if cfg!(feature = "postgres") {
+        return Database::Postgres;
+    } else if cfg!(feature = "sqlite") {
+        return Database::Sqlite;
+    } else if cfg!(feature = "mysql") {
+        return Database::Mysql;
+    } else if cfg!(feature = "any") {
+        return Database::Any;
+    }
+    let db = input.attrs.iter()
+        .find(|attr| attr.path.is_ident("database"))
+        .map(|attr| {
+            let name = attr.parse_args::<syn::LitStr>().unwrap().value();
+            match name.to_lowercase().as_str() {
+                "postgres" | "postgresql" => Database::Postgres,
+                "mysql" => Database::Mysql,
+                "sqlite" => Database::Sqlite,
+                "any" => Database::Any,
+                _ => panic!("`database`: {name} is not valid. Valid values: 'postgres', 'mysql', 'sqlite', 'any'")
+            }
+        })
+        .expect("Missing `database` attribute");
+    db
+}
+
 
 pub fn get_debug_slow_from_table_scope(ast: &DeriveInput) -> Option<i32> {
     let struct_name = &ast.ident;
@@ -257,31 +338,22 @@ pub fn table_name_derive(ast: &DeriveInput) -> syn::Result<TokenStream> {
 
 }
 
-pub fn get_database() -> TokenStream {
-    if cfg!(feature = "postgres") {
-        quote! { sqlx::Postgres }
-    } else if cfg!(feature = "sqlite") {
-        quote! { sqlx::Sqlite }
-    } else if cfg!(feature = "mysql") {
-        quote! { sqlx::Mysql }
-    } else if cfg!(feature = "any") {
-        quote! { sqlx::Any }
-    } else {
-        panic!("Unknown database 1")
+pub fn get_database_type(db: Database) -> TokenStream {
+    match db {
+        Database::Postgres => quote! { sqlx::Postgres },
+        Database::Sqlite => quote! { sqlx::Sqlite },
+        Database::Mysql => quote! { sqlx::Mysql },
+        Database::Any => quote! { sqlx::Any },
     }
+
 }
 
-pub fn get_database_dialect() -> Box<dyn Dialect> {
-    if cfg!(feature = "postgres") {
-        Box::new(PostgreSqlDialect {})
-    } else if cfg!(feature = "sqlite") {
-        Box::new(GenericDialect {})
-    } else if cfg!(feature = "mysql") {
-        Box::new(MySqlDialect {})
-    } else if cfg!(feature = "any") {
-        Box::new(GenericDialect {})
-    } else {
-        panic!("Unknown database 2")
+pub fn get_database_dialect(db: Database) -> Box<dyn Dialect> {
+    match db {
+        Database::Postgres => Box::new(PostgreSqlDialect {}),
+        Database::Sqlite => Box::new(SQLiteDialect {}),
+        Database::Mysql => Box::new(MySqlDialect {}),
+        Database::Any => Box::new(GenericDialect {}),
     }
 }
 
@@ -325,13 +397,13 @@ pub fn has_duplicates(vec: &Vec<Field>) -> bool {
     false
 }
 
-pub fn derive_all(input: &DeriveInput, for_path: Option<&syn::Path>, scope: Scope) -> syn::Result<TokenStream> {
+pub fn derive_all(input: &DeriveInput, for_path: Option<&syn::Path>, scope: Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let table_name = table_name_derive(&input)?;
-    let insert = insert::derive_insert(&input, for_path, scope)?;
-    let update = update::derive_update(&input, for_path, scope)?;
-    let select = select::derive_select(&input, for_path, scope)?;
-    let delete = delete::derive_delete(&input, for_path, scope)?;
-    let upsert = upsert::derive(&input, for_path, scope)?;
+    let insert = insert::derive_insert(&input, for_path, scope, db)?;
+    let update = update::derive_update(&input, for_path, scope, db)?;
+    let select = select::derive_select(&input, for_path, scope, db)?;
+    let delete = delete::derive_delete(&input, for_path, scope, db)?;
+    let upsert = upsert::derive_upsert(&input, for_path, scope, db)?;
 
     Ok(quote! {
         #table_name

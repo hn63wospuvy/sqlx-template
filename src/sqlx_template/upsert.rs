@@ -5,17 +5,18 @@ use syn::{
     Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type,
 };
 
-use crate::{parser, sqlx_template::get_field_name};
+use crate::{parser, sqlx_template::{get_database_from_ast, get_field_name, Database}};
 
 use super::get_table_name;
 
-pub fn derive(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope) -> syn::Result<TokenStream> {
+pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
     let struct_name = match for_path {
         Some(path) => quote! {#path},
         None => quote! {#struct_name},
     };
     let table_name = get_table_name(&ast);
+    let db = db.unwrap_or(get_database_from_ast(&ast));
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
 
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
@@ -328,7 +329,7 @@ pub fn derive(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Sco
 
                 let where_stmt = match where_stmt_str {
                     Some(sql) => {
-                        let (cols, tables) = parser::get_columns_and_compound_ids(&sql, super::get_database_dialect()).unwrap();
+                        let (cols, tables) = parser::get_columns_and_compound_ids(&sql, super::get_database_dialect(db)).unwrap();
                         for col in cols {
                             if !all_columns_name.contains(&col) {
                                 panic!("Invalid where statement: {col} column is not found in field list");
@@ -358,8 +359,8 @@ pub fn derive(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Sco
 
                 
                 let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
-                let database = super::get_database();
-                let generated = if return_entity && cfg!(feature = "postgres") {
+                let database = super::get_database_type(db);
+                let generated = if return_entity && matches!(db, Database::Postgres) {
                     let sql_return = format!(
                         "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt} RETURNING *",
                     );

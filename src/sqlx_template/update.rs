@@ -4,17 +4,18 @@ use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type
 };
 
-use crate::{parser, sqlx_template::get_field_name};
+use crate::{parser, sqlx_template::{get_database_from_ast, get_field_name, Database}};
 
 use super::get_table_name;
 
-pub fn derive_update(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope) -> syn::Result<TokenStream> {
+pub fn derive_update(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
     let struct_name = match for_path {
         Some(path) => quote! {#path},
         None => quote! {#struct_name},
     };
     let table_name = get_table_name(&ast);
+    let db = db.unwrap_or(get_database_from_ast(&ast));
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
 
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
@@ -235,7 +236,7 @@ pub fn derive_update(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         where_stmt.push(stmt);
                     }
                     if let Some(where_stmt_str) = where_stmt_str {
-                        let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect()).unwrap();
+                        let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect(db)).unwrap();
                         for col in cols {
                             if !all_columns_name.contains(&col) {
                                 panic!("Invalid where statement: {col} column is not found in column list");
@@ -286,8 +287,8 @@ pub fn derive_update(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
 
                     let binds_return =  binds.clone();    
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow); 
-                    let database = super::get_database();              
-                    let generated = if return_entity && cfg!(feature = "postgres") {
+                    let database = super::get_database_type(db);              
+                    let generated = if return_entity && matches!(db, Database::Postgres) {
                         quote! {
                             pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , re: &#struct_name, conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
                                 let sql = #sql_return;
@@ -445,8 +446,8 @@ pub fn derive_update(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     let binds_return = binds.clone();
 
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow); 
-                    let database = super::get_database();  
-                    let generated = if return_entity && cfg!(feature = "postgres"){
+                    let database = super::get_database_type(db);  
+                    let generated = if return_entity && matches!(db, Database::Postgres){
                         quote! {
                             pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
                                 let sql = #sql_return;

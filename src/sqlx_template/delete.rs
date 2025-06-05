@@ -6,17 +6,18 @@ use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, Path, Token
 };
 
-use crate::parser;
+use crate::{parser, sqlx_template::{get_database_from_ast, Database}};
 
 use super::{get_debug_slow_from_table_scope, get_field_name, get_table_name, Scope};
 
-pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope) -> syn::Result<TokenStream> {
+pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
     let struct_name = match for_path {
         Some(path) => quote! {#path},
         None => quote! {#struct_name},
     };
     let table_name = get_table_name(&ast);
+    let db = db.unwrap_or(get_database_from_ast(&ast));
     
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
@@ -141,7 +142,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     .collect::<Vec<_>>()
                     ;
                 if let Some(where_stmt_str) = where_stmt_str {
-                    let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect()).unwrap();
+                    let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect(db)).unwrap();
                     for col in cols {
                         if !all_columns_name.contains(&col) {
                             panic!("Invalid where statement: {col} column is not found in field list");
@@ -163,7 +164,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     }
                 });
                 let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
-                let database = super::get_database();
+                let database = super::get_database_type(db);
                 let generated = quote! {
                     pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> Result<u64, sqlx::Error> {
                         let sql = #sql;

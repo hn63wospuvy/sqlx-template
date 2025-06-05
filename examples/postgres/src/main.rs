@@ -1,7 +1,7 @@
 
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use sqlx_template::{insert, multi_query, query, select, update, Columns, DeleteTemplate, SelectTemplate, UpsertTemplate, TableName, UpdateTemplate};
+use sqlx_template::{insert, multi_query, postgres_delete, postgres_select, query, select, update, Columns, DeleteTemplate, SelectTemplate, SqlxTemplate, TableName, UpdateTemplate, UpsertTemplate};
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
 use sqlx_template::InsertTemplate;
 
@@ -172,6 +172,7 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 
 #[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, UpsertTemplate, FromRow, TableName, Default, Clone, Debug)]
 #[debug_slow = 1000]
+#[database = "postgres"]
 #[table_name = "users"]
 #[tp_upsert(by = "id")]
 #[tp_upsert(by = "email")]
@@ -202,8 +203,9 @@ pub struct User {
 
 
 
-#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, UpsertTemplate, FromRow, TableName, Default, Clone, Debug)]
+#[derive(SqlxTemplate, FromRow, Default, Clone, Debug)]
 #[debug_slow = 1000]
+#[database = "postgres"]
 #[table_name = "chats"]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "id, sender", order = "id desc")]
@@ -222,8 +224,9 @@ pub struct Chat {
 }
 
 
-#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug, Columns)]
+#[derive(SqlxTemplate, FromRow, Default, Clone, Debug, Columns)]
 #[table_name = "organizations"]
+#[database = "postgres"]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "code")]
 #[tp_select_all(order = "id desc")]
@@ -245,10 +248,12 @@ pub struct Organization {
 
 
 #[multi_query(file = "sql/init.sql", 0)]
+#[database("postgres")]
 async fn migrate() {}
 
 
 #[insert("INSERT INTO users(email, password, org, active, created_by, updated_by, updated_at) VALUES (:email, :password, :org, true, NULL, NULL, NULL)")]
+#[database("postgres")]
 async fn insert_new_user(email: &str, password: &str, org: i32) {}
 
 #[select(
@@ -259,6 +264,7 @@ async fn insert_new_user(email: &str, password: &str, org: i32) {}
 ",
     debug = 100
 )]
+#[database("postgres")]
 pub async fn query_all_user_info(name: &str, org: i32) -> Vec<User> {}
 
 #[select("
@@ -268,7 +274,20 @@ pub async fn query_all_user_info(name: &str, org: i32) -> Vec<User> {}
     WHERE users.email LIKE '%' || :name || '%'
     GROUP BY organizations.id
 ")]
+#[database("postgres")]
 pub fn query_user_org(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
+
+
+
+#[postgres_select("
+    SELECT organizations.id, organizations.name
+    FROM organizations
+    JOIN users ON users.org = organizations.id
+    WHERE users.email LIKE '%' || :name || '%'
+    GROUP BY organizations.id
+")]
+pub fn query_user_org1(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
+
 
 
 

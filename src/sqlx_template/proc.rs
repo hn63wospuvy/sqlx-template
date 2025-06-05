@@ -57,23 +57,23 @@ pub fn proc_gen(input: DeriveInput, nested_metas: Vec<NestedMeta>) -> syn::Resul
     let table_name = super::get_table_name(&input);
 
     let mut functions = vec![];
-    if derives_set.contains("InsertTemplate") {
-        functions.push(super::derive_all(&input, for_path.as_ref(), Scope::Mod)?);
+    if derives_set.contains("SqlxTemplate") {
+        functions.push(super::derive_all(&input, for_path.as_ref(), Scope::Mod, None)?);
     } else {
         if derives_set.contains("InsertTemplate") {
-            functions.push(super::insert::derive_insert(&input, for_path.as_ref(), Scope::Mod)?);
+            functions.push(super::insert::derive_insert(&input, for_path.as_ref(), Scope::Mod, None)?);
         }
         if derives_set.contains("UpdateTemplate") {
-            functions.push(super::update::derive_update(&input, for_path.as_ref(), Scope::Mod)?);
+            functions.push(super::update::derive_update(&input, for_path.as_ref(), Scope::Mod, None)?);
         }
         if derives_set.contains("UpsertTemplate") {
-            functions.push(super::upsert::derive(&input, for_path.as_ref(), Scope::Mod)?);
+            functions.push(super::upsert::derive_upsert(&input, for_path.as_ref(), Scope::Mod, None)?);
         }
         if derives_set.contains("SelectTemplate") {
-            functions.push(super::select::derive_select(&input, for_path.as_ref(), Scope::Mod)?);
+            functions.push(super::select::derive_select(&input, for_path.as_ref(), Scope::Mod, None)?);
         }
         if derives_set.contains("DeleteTemplate") {
-            functions.push(super::delete::derive_delete(&input, for_path.as_ref(), Scope::Mod)?);
+            functions.push(super::delete::derive_delete(&input, for_path.as_ref(), Scope::Mod, None)?);
         }
     }
 
