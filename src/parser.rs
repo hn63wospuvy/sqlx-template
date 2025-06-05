@@ -101,7 +101,7 @@ fn validate_statement(statement: Statement, params: &Vec<String>, mode: Option<M
         }
     }
     let sql = statement.to_string();
-    let (sql, params) = replace_placeholder(&sql, res);
+    let (sql, params) = replace_placeholder(&sql, res, None);
     Ok(ValidateQueryResult { sql, params })
 }
 
@@ -126,10 +126,10 @@ pub fn validate_query(sql: &str, params: &Vec<String>, mode: Option<Mode>, diale
 }
 
 
-fn replace_placeholder(s: &str, placeholder: Vec<String>) -> (String, Vec<String>) {
+pub(crate) fn replace_placeholder(s: &str, placeholder: Vec<String>, start_counter: Option<i32>) -> (String, Vec<String>) {
     let mut result = String::from(s);
     let mut keyword_order = Vec::new();
-    let mut counter = 1;
+    let mut counter = start_counter.unwrap_or(1);
 
     for keyword in placeholder {
         while let Some(pos) = result.find(&keyword) {
@@ -812,9 +812,10 @@ fn from_expr(expr: &Expr, res: &mut Vec<String>) -> Result<(), String> {
 }
 
 #[derive(Debug, Default)]
-struct ColumnTableList {
-    columns: HashSet<String>,
-    tables: HashSet<String>,
+pub(crate) struct ColumnTableList {
+    pub(crate) columns: HashSet<String>,
+    pub(crate) tables: HashSet<String>,
+    pub(crate) placeholder_vars: Vec<String>,
 }
 
 impl ColumnTableList {
@@ -822,6 +823,7 @@ impl ColumnTableList {
         self.columns.insert(column.value.clone());
         Ok(())
     }
+
 
     fn add_tables(&mut self, ids: &Vec<Ident>) -> Result<(), String> {
         match ids.len() {
@@ -838,11 +840,17 @@ impl ColumnTableList {
         }
     }
 
-    fn check_value(&self, val: &Value) -> Result<(), String> {
+    fn add_value(&mut self, val: &Value) -> Result<(), String>{
         match val {
-            Value::Placeholder(_) => Err("Placeholder is not allowed".into()),
-            _ => Ok(())
-        }
+            Value::Placeholder(p) => {
+                if !p.starts_with(":") {
+                    return Err("Placeholder {} is not valid. Must start with ':'".into());
+                }
+                self.placeholder_vars.push(p.clone());
+            },
+            _ => {}
+        };
+        Ok(())
     }
 }
 
@@ -915,8 +923,8 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
         },
         Expr::Collate { expr, collation } => extract_columns_and_compound_ids(&**expr, res),
         Expr::Nested(x) => extract_columns_and_compound_ids(&**x, res),
-        Expr::Value(x) => res.check_value(x),
-        Expr::IntroducedString { introducer, value } => res.check_value(value),
+        Expr::Value(x) => res.add_value(x),
+        Expr::IntroducedString { introducer, value } => res.add_value(value),
         Expr::TypedString { data_type, value } => return Ok(()),
         Expr::MapAccess { column, keys } => extract_columns_and_compound_ids(&**column, res),
         Expr::Function(x) => return Err("Function is not supported".into()),
@@ -1012,7 +1020,7 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
     }
 }
 
-pub fn get_columns_and_compound_ids(sql: &str, dialect: Box<dyn Dialect>) -> Result<(HashSet<String>, HashSet<String>), String> {
+pub fn get_columns_and_compound_ids(sql: &str, dialect: Box<dyn Dialect>) -> Result<ColumnTableList, String> {
     
     let mut p = Parser::new(dialect.as_ref())
         .try_with_sql(sql)
@@ -1020,7 +1028,7 @@ pub fn get_columns_and_compound_ids(sql: &str, dialect: Box<dyn Dialect>) -> Res
     let expr = p.parse_expr().map_err(|e| format!("Parse Expr error: {e}"))?;
     let mut res = ColumnTableList::default();
     extract_columns_and_compound_ids(&expr, &mut res)?;
-    Ok((res.columns, res.tables))
+    Ok(res)
 }
 
 #[test]
@@ -1036,7 +1044,7 @@ fn test() {
             uppercase: true,
             lines_between_queries: 0,
         });
-        let (new_sql, ordered_param) = replace_placeholder(&sql, a.expect("Failed to get value placeholder"));
+        let (new_sql, ordered_param) = replace_placeholder(&sql, a.expect("Failed to get value placeholder"), None);
         dbg!(new_sql);
         dbg!(ordered_param);
 
@@ -1046,7 +1054,7 @@ fn test() {
         let s = "SELECT c ->> :name, d ->> 'age' ->> :age FROM t1 WHERE user = :name and age = :age";
         let keywords = vec![":name".to_string(), ":age".to_string()];
     
-        let (new_s, keyword_order) = replace_placeholder(s, keywords);
+        let (new_s, keyword_order) = replace_placeholder(s, keywords, None);
     
         println!("Chuỗi đầu ra: {}", new_s);
         println!("Thứ tự keywords: {:?}", keyword_order);

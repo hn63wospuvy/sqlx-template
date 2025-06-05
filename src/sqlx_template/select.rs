@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
@@ -7,7 +7,10 @@ use syn::{
     Meta, MetaList, MetaNameValue, NestedMeta, Token,
 };
 
-use crate::{parser, sqlx_template::{get_database_from_ast, Database}};
+use crate::{
+    parser,
+    sqlx_template::{get_database_from_ast, Database},
+};
 
 use super::{get_database_type, get_table_name, Scope};
 
@@ -20,7 +23,12 @@ enum SelectType {
     Count,
 }
 
-pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope, db: Option<Database>) -> syn::Result<TokenStream> {
+pub fn derive_select(
+    ast: &DeriveInput,
+    for_path: Option<&syn::Path>,
+    scope: super::Scope,
+    db: Option<Database>,
+) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
     let struct_name = match for_path {
         Some(path) => quote! {#path},
@@ -85,7 +93,8 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                                         lit.split(',').map(|x| x.trim()).collect::<Vec<_>>();
                                     order_fields =
                                         check_order_fields(&fields_str, all_fields.clone());
-                                    let  order_fields_only = order_fields.iter()
+                                    let order_fields_only = order_fields
+                                        .iter()
                                         .map(|x| x.0.clone())
                                         .collect::<Vec<_>>();
                                     if super::has_duplicates(&order_fields_only) {
@@ -116,9 +125,11 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                                 }
                             } else if nv.path.is_ident("debug") {
                                 if let Lit::Int(lit) = &nv.lit {
-                                    let slow_in_ms = lit.base10_parse().expect("Invalid debug value. Must be integer");
+                                    let slow_in_ms = lit
+                                        .base10_parse()
+                                        .expect("Invalid debug value. Must be integer");
                                     debug_slow.replace(slow_in_ms);
-                                } 
+                                }
                             }
                         }
                         _ => {}
@@ -139,7 +150,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
-                        db
+                        db,
                     )?,
                     "tp_select_one" => build_query(
                         SelectType::One,
@@ -151,7 +162,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
-                        db
+                        db,
                     )?,
                     "tp_select_page" => build_query(
                         SelectType::Page,
@@ -163,7 +174,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
-                        db
+                        db,
                     )?,
                     "tp_select_stream" => build_query(
                         SelectType::Stream,
@@ -175,7 +186,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
-                        db
+                        db,
                     )?,
                     "tp_select_count" => build_query(
                         SelectType::Count,
@@ -187,7 +198,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_name,
                         where_stmt_str,
                         debug_slow,
-                        db
+                        db,
                     )?,
                     _ => None,
                 };
@@ -198,10 +209,27 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
             }
         }
     }
-    functions.push(super::gen_with_doc(build_default_find_all_query(&struct_name, &table_name, debug_slow, &all_fields, db)));
-    functions.push(super::gen_with_doc(build_default_count_all_query(&struct_name, &table_name, debug_slow, db)));
-    functions.push(super::gen_with_doc(build_default_find_page_all_query(&struct_name, &table_name, debug_slow, &all_fields, db)));
-    
+    functions.push(super::gen_with_doc(build_default_find_all_query(
+        &struct_name,
+        &table_name,
+        debug_slow,
+        &all_fields,
+        db,
+    )));
+    functions.push(super::gen_with_doc(build_default_count_all_query(
+        &struct_name,
+        &table_name,
+        debug_slow,
+        db,
+    )));
+    functions.push(super::gen_with_doc(build_default_find_page_all_query(
+        &struct_name,
+        &table_name,
+        debug_slow,
+        &all_fields,
+        db,
+    )));
+
     let expanded = match scope {
         super::Scope::Struct => quote! {
             impl #struct_name {
@@ -218,7 +246,7 @@ pub fn derive_select(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     #(#functions)*
                 }
             }
-        },
+        }
     };
 
     Ok(expanded.into())
@@ -231,7 +259,10 @@ fn build_default_find_all_query(
     all_fields: &Vec<&Field>,
     db: Database,
 ) -> proc_macro2::TokenStream {
-    let all_fields_str = all_fields.iter().filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string()))).collect::<Vec<String>>();
+    let all_fields_str = all_fields
+        .iter()
+        .filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string())))
+        .collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
     let sql = format!("SELECT {all_fields_str} FROM {table_name}");
     let database = super::get_database_type(db);
@@ -259,7 +290,10 @@ fn build_default_find_page_all_query(
 ) -> proc_macro2::TokenStream {
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
-    let all_fields_str = all_fields.iter().filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string()))).collect::<Vec<String>>();
+    let all_fields_str = all_fields
+        .iter()
+        .filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string())))
+        .collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
     let sql = format!("SELECT {all_fields_str} FROM {table_name} LIMIT $1 OFFSET $2");
     let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
@@ -296,7 +330,7 @@ fn build_default_find_page_all_query(
                 } else {
                     Some(count_query(conn).await?)
                 }
-                
+
             } else {
                 None
             };
@@ -343,9 +377,15 @@ fn build_query(
 ) -> syn::Result<Option<proc_macro2::TokenStream>> {
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
-    let all_fields_str = all_fields.iter().filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string()))).collect::<Vec<String>>();
+    let all_fields_str = all_fields
+        .iter()
+        .filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string())))
+        .collect::<Vec<String>>();
     let all_fields_str_join = all_fields_str.join(", ");
-    match (by_fields.is_empty() && where_stmt_str.is_none(), order_fields.is_empty()) {
+    match (
+        by_fields.is_empty() && where_stmt_str.is_none(),
+        order_fields.is_empty(),
+    ) {
         (true, true) => {
             // Do nothing. Default implemention
         }
@@ -367,33 +407,28 @@ fn build_query(
                     .join("_and_")
             );
             let fn_name = match fn_name {
-                Some(fn_name) => Ident::new(
-                    &fn_name,
-                    proc_macro2::Span::call_site(),
-                ),
-                None => {
-                    match qtype {
-                        SelectType::All => Ident::new(
-                            &format!("find_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                        SelectType::One => Ident::new(
-                            &format!("find_one_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                        SelectType::Page => Ident::new(
-                            &format!("find_page_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                        SelectType::Stream => Ident::new(
-                            &format!("stream_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                        SelectType::Count => Ident::new(
-                            &format!("count_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                    }
+                Some(fn_name) => Ident::new(&fn_name, proc_macro2::Span::call_site()),
+                None => match qtype {
+                    SelectType::All => Ident::new(
+                        &format!("find_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
+                    SelectType::One => Ident::new(
+                        &format!("find_one_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
+                    SelectType::Page => Ident::new(
+                        &format!("find_page_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
+                    SelectType::Stream => Ident::new(
+                        &format!("stream_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
+                    SelectType::Count => Ident::new(
+                        &format!("count_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
                 },
             };
 
@@ -408,7 +443,8 @@ fn build_query(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let sql = format!("SELECT {all_fields_str_join} FROM {table_name} ORDER BY {order_str}");
+            let sql =
+                format!("SELECT {all_fields_str_join} FROM {table_name} ORDER BY {order_str}");
             let count_sql = format!("SELECT COUNT(1) FROM {table_name} ORDER BY {order_str}");
             let generated = match qtype {
                 SelectType::All => {
@@ -542,37 +578,32 @@ fn build_query(
                 ))
             }
             let fn_name = match fn_name {
-                Some(fn_name) => Ident::new(
-                    &fn_name,
-                    proc_macro2::Span::call_site(),
-                ),
-                None => {
-                    match qtype {
-                        SelectType::All => Ident::new(
-                            &format!("find_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                        SelectType::One => Ident::new(
-                            &format!("find_one_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                        SelectType::Page => Ident::new(
-                            &format!("find_page_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                        SelectType::Stream => Ident::new(
-                            &format!("stream_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                        SelectType::Count => Ident::new(
-                            &format!("count_{}", post_fix),
-                            proc_macro2::Span::call_site(),
-                        ),
-                    }
+                Some(fn_name) => Ident::new(&fn_name, proc_macro2::Span::call_site()),
+                None => match qtype {
+                    SelectType::All => Ident::new(
+                        &format!("find_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
+                    SelectType::One => Ident::new(
+                        &format!("find_one_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
+                    SelectType::Page => Ident::new(
+                        &format!("find_page_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
+                    SelectType::Stream => Ident::new(
+                        &format!("stream_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
+                    SelectType::Count => Ident::new(
+                        &format!("count_{}", post_fix),
+                        proc_macro2::Span::call_site(),
+                    ),
                 },
             };
 
-            let fn_args = by_fields
+            let mut fn_args = by_fields
                 .iter()
                 .map(|field| {
                     let arg_name = field.ident.as_ref().unwrap();
@@ -582,10 +613,9 @@ fn build_query(
                     } else {
                         quote! { #arg_name: &'c #arg_type }
                     }
-                    
                 })
                 .collect::<Vec<_>>();
-            
+
             let mut where_condition = by_fields
                 .iter()
                 .enumerate()
@@ -596,27 +626,91 @@ fn build_query(
                         index + 1
                     )
                 })
-                .collect::<Vec<_>>()
-                ;
+                .collect::<Vec<_>>();
+            let mut binds = by_fields
+                .iter()
+                .map(|field| {
+                    let arg_name = field.ident.as_ref().unwrap();
+                    quote! {
+                        .bind(#arg_name)
+                    }
+                })
+                .collect::<Vec<_>>();
             if let Some(where_stmt_str) = where_stmt_str {
-                let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect(db)).unwrap();
-                for col in cols {
+                let par_res = parser::get_columns_and_compound_ids(
+                    &where_stmt_str,
+                    super::get_database_dialect(db),
+                )
+                .unwrap();
+                for col in &par_res.columns {
                     if !all_fields_str.contains(&col) {
                         panic!("Invalid where statement: {col} column is not found in field list");
                     }
                 }
-                for table in tables {
-                    if table != table_name {
+                for table in &par_res.tables {
+                    if table != &table_name {
                         panic!("Invalid where statement: {table} is not allowed. Only {table_name} are permitted.");
                     }
                 }
-                where_condition.push(where_stmt_str);
+                if !par_res.placeholder_vars.is_empty() {
+                    let by_fields_map = by_fields
+                        .iter()
+                        .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                        .collect::<HashMap<_, _>>();
+                    let mut extend_fields = par_res
+                        .placeholder_vars
+                        .iter()
+                        .filter_map(|p| {
+                            if all_fields_str.contains(p) {
+                                panic!("Field {p} is not found in list columns name");
+                            }
+                            by_fields_map.get(p).map(|field| {
+                                let arg_name = field.ident.as_ref().unwrap();
+                                let arg_type = &field.ty;
+                                if &arg_type.to_token_stream().to_string() == "String" {
+                                    (
+                                        quote! {
+                                            .bind(&#arg_name)
+                                        },
+                                        quote! { #arg_name: &str },
+                                    )
+                                } else {
+                                    (
+                                        quote! {
+                                            .bind(&#arg_name)
+                                        },
+                                        quote! { #arg_name: &#arg_type },
+                                    )
+                                }
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    let (mut bind_vec, mut args_vec) =
+                        extend_fields.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
+                    fn_args.append(&mut args_vec);
+                    binds.append(&mut bind_vec);
+                    let start_counter = by_fields.len();
+                    let (sql, params) = parser::replace_placeholder(
+                        &where_stmt_str,
+                        par_res.placeholder_vars,
+                        Some(start_counter as i32),
+                    );
+                    where_condition.push(sql);
+                } else {
+                    where_condition.push(where_stmt_str);
+                }
             }
-            let  where_condition = where_condition.join(" AND ");
+            let where_condition = where_condition.join(" AND ");
 
-            let count_sql = format!("SELECT COUNT(1) FROM {} WHERE {}", &table_name, where_condition);
+            let count_sql = format!(
+                "SELECT COUNT(1) FROM {} WHERE {}",
+                &table_name, where_condition
+            );
             let sql = if order_fields.is_empty() {
-                format!("SELECT {all_fields_str_join} FROM {} WHERE {}", &table_name, where_condition)
+                format!(
+                    "SELECT {all_fields_str_join} FROM {} WHERE {}",
+                    &table_name, where_condition
+                )
             } else {
                 let order_str = order_fields
                     .iter()
@@ -634,13 +728,7 @@ fn build_query(
                     &table_name, where_condition, order_str
                 )
             };
-            let binds = by_fields.iter().map(|field| {
-                let arg_name = field.ident.as_ref().unwrap();
-                quote! {
-                    .bind(#arg_name)
-                }
-            });
-            
+
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
@@ -678,7 +766,7 @@ fn build_query(
                         total_binds_args + 1,
                         total_binds_args + 2
                     );
-                    let mut total_binds = binds.collect::<Vec<_>>();
+                    let mut total_binds = binds;
                     let mut total_binds_for_count = total_binds.clone();
                     total_binds.push(quote! {
                         .bind(paging_limit)
@@ -688,13 +776,13 @@ fn build_query(
                     });
 
                     let fn_args_name = by_fields
-                    .iter()
-                    .map(|field| {
-                        let arg_name = field.ident.as_ref().unwrap();
-                        let arg_type = &field.ty;
-                        quote! { #arg_name }
-                    })
-                    .collect::<Vec<_>>();
+                        .iter()
+                        .map(|field| {
+                            let arg_name = field.ident.as_ref().unwrap();
+                            let arg_type = &field.ty;
+                            quote! { #arg_name }
+                        })
+                        .collect::<Vec<_>>();
                     let fn_args_name_clone = fn_args_name.clone();
                     quote! {
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>(#(#fn_args),* , page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {

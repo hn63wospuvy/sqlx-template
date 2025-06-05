@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
@@ -117,7 +117,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     )
                 };
 
-                let fn_args = by_fields
+                let mut fn_args = by_fields
                     .iter()
                     .map(|field| {
                         let arg_name = field.ident.as_ref().unwrap();
@@ -129,6 +129,12 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         }
                     })
                     .collect::<Vec<_>>();
+                let mut binds = by_fields.iter().map(|field| {
+                    let arg_name = field.ident.as_ref().unwrap();
+                    quote! {
+                        .bind(&#arg_name)
+                    }
+                }).collect::<Vec<_>>();
                 let mut where_condition = by_fields
                     .iter()
                     .enumerate()
@@ -141,28 +147,61 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     })
                     .collect::<Vec<_>>()
                     ;
+
                 if let Some(where_stmt_str) = where_stmt_str {
-                    let (cols, tables) = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect(db)).unwrap();
-                    for col in cols {
+                    let par_res = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect(db)).unwrap();
+                    for col in &par_res.columns {
                         if !all_columns_name.contains(&col) {
                             panic!("Invalid where statement: {col} column is not found in field list");
                         }
                     }
-                    for table in tables {
-                        if table != table_name  {
+                    for table in &par_res.tables {
+                        if table != &table_name  {
                             panic!("Invalid where statement: {table} is not allowed. Only {table_name} are permitted.");
                         }
                     }
-                    where_condition.push(where_stmt_str);
-                }
-                let mut where_condition =    where_condition.join(" AND ");
-                let sql = format!("DELETE FROM {} WHERE {}", &table_name, where_condition);
-                let binds = by_fields.iter().map(|field| {
-                    let arg_name = field.ident.as_ref().unwrap();
-                    quote! {
-                        .bind(&#arg_name)
+                    if !par_res.placeholder_vars.is_empty() {
+                        let by_fields_map = by_fields
+                            .iter()
+                            .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                            .collect::<HashMap<_, _>>();
+                        let mut extend_fields = par_res.placeholder_vars.iter()
+                        .filter_map(|p| {
+                            if all_columns_name.contains(p) {
+                                panic!("Field {p} is not found in list columns name");
+                            }
+                            by_fields_map.get(p)
+                            .map(|field|{
+                                let arg_name = field.ident.as_ref().unwrap();
+                                let arg_type = &field.ty;
+                                if &arg_type.to_token_stream().to_string() == "String" {
+                                    (quote! {
+                                        .bind(&#arg_name)
+                                    }, 
+                                    quote! { #arg_name: &str })
+                                } else {
+                                    (quote! {
+                                        .bind(&#arg_name)
+                                    }, 
+                                    quote! { #arg_name: &#arg_type })
+                                }
+                            })
+                        }).collect::<Vec<_>>();
+                        let (mut bind_vec, mut args_vec) = extend_fields.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
+                        fn_args.append(&mut args_vec);
+                        binds.append(&mut bind_vec);
+                        let start_counter = by_fields.len();
+                        let (sql, params) = parser::replace_placeholder(&where_stmt_str, par_res.placeholder_vars, Some(start_counter as i32));
+                        where_condition.push(sql);
+                    
+                    } else {
+                        where_condition.push(where_stmt_str);
                     }
-                });
+                    
+                }
+                let mut where_condition =  where_condition.join(" AND ");
+                let sql = format!("DELETE FROM {} WHERE {}", &table_name, where_condition);
+                
                 let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                 let database = super::get_database_type(db);
                 let generated = quote! {

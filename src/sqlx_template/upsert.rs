@@ -329,13 +329,16 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
 
                 let where_stmt = match where_stmt_str {
                     Some(sql) => {
-                        let (cols, tables) = parser::get_columns_and_compound_ids(&sql, super::get_database_dialect(db)).unwrap();
-                        for col in cols {
+                        let par_res = parser::get_columns_and_compound_ids(&sql, super::get_database_dialect(db)).unwrap();
+                        if !par_res.placeholder_vars.is_empty() {
+                            panic!("Placeholder var is not allowed here: {:?}", par_res.placeholder_vars);
+                        }
+                        for col in &par_res.columns {
                             if !all_columns_name.contains(&col) {
                                 panic!("Invalid where statement: {col} column is not found in field list");
                             }
                         }
-                        for table in tables {
+                        for table in par_res.tables {
                             if table != table_name && table != "EXCLUDED" {
                                 panic!("Invalid where statement: {table} is not allowed. Only {table_name} or EXCLUDED are permitted.");
                             }
