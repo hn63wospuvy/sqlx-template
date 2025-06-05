@@ -17,6 +17,9 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
     };
     let table_name = get_table_name(&ast);
     let db = db.unwrap_or(get_database_from_ast(&ast));
+    if !matches!(db, Database::Postgres) {
+        panic!("`tp_upsert` only support for Postgres")
+    }
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
 
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
