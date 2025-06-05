@@ -1,6 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
-    fmt::format,
+    backtrace::Backtrace, collections::{HashMap, HashSet}, fmt::format
 };
 
 use proc_macro2::{Span, TokenStream};
@@ -77,33 +76,18 @@ pub(super) fn get_scope(ast: &DeriveInput) -> Scope {
 }
 
 pub fn get_table_name(ast: &DeriveInput) -> String {
-    let struct_name = &ast.ident;
-    let mut table_names = ast
-        .attrs
-        .iter()
-        .filter_map(|attr| {
-            if let Ok(Meta::NameValue(MetaNameValue {
-                path,
-                lit: Lit::Str(lit_str),
-                ..
-            })) = attr.parse_meta()
-            {
-                if path.is_ident("table_name") {
-                    let name = lit_str.value();
-                    Some(name)
-                } else {
-                    None
-                }
-            } else {
-                None
+    let mut res = None;
+    ast.attrs.iter()
+        .filter(|attr| attr.path.is_ident("table"))
+        .for_each(|attr| {
+            if res.is_some() {
+                panic!("More than one `table` attribute was found")
             }
+            let name = attr.parse_args::<syn::LitStr>().expect("Expected #[table(\"table_name\")]").value();
+            res.replace(name);
         })
-        .collect::<Vec<_>>();
-    match table_names.len() {
-        0 => panic!("table_name attribute not found"),
-        1 => table_names.pop().unwrap(),
-        _ => panic!("More than one table_name attribute was found"),
-    }
+        ;
+    res.expect("Missing `table` attribute")
 }
 
 pub fn get_database_from_ast(ast: &DeriveInput) -> Database {
@@ -116,39 +100,25 @@ pub fn get_database_from_ast(ast: &DeriveInput) -> Database {
     } else if cfg!(feature = "any") {
         return Database::Any;
     }
-    let struct_name = &ast.ident;
-    let mut dbs = ast
-        .attrs
-        .iter()
-        .filter_map(|attr| {
-            if let Ok(Meta::NameValue(MetaNameValue {
-                path,
-                lit: Lit::Str(lit_str),
-                ..
-            })) = attr.parse_meta()
-            {
-                if path.is_ident("database") {
-                    let name = lit_str.value();
-                    match name.to_lowercase().as_str() {
-                        "postgres" | "postgresql" => Some(Database::Postgres),
-                        "mysql" => Some(Database::Mysql),
-                        "sqlite" => Some(Database::Sqlite),
-                        "any" => Some(Database::Any),
-                        _ => panic!("`database`: {name} is not valid. Valid values: 'postgres', 'mysql', 'sqlite', 'any'")
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
+    let mut res = None;
+    ast.attrs.iter()
+        .filter(|attr| attr.path.is_ident("db"))
+        .for_each(|attr| {
+            if res.is_some() {
+                panic!("More than one `db` attribute was found")
             }
+            let name = attr.parse_args::<syn::LitStr>().expect("Expected #[db(\"postgres\")]").value();
+            let db = match name.to_lowercase().as_str() {
+                "postgres" | "postgresql" => Database::Postgres,
+                "mysql" => Database::Mysql,
+                "sqlite" => Database::Sqlite,
+                "any" => Database::Any,
+                _ => panic!("`db`: {name} is not valid. Valid values: 'postgres', 'mysql', 'sqlite', 'any'")
+            };
+            res.replace(db);
         })
-        .collect::<Vec<_>>();
-    match dbs.len() {
-        0 => panic!("`database` attribute not found. Valid values: 'postgres', 'mysql', 'sqlite', 'any'"),
-        1 => dbs.pop().unwrap(),
-        _ => panic!("More than one database attribute was found"),
-    }
+        ;
+    res.expect("Missing `db` attribute")
 }
 
 pub fn get_database_from_input_fn(input: &ItemFn) -> Database {
@@ -161,20 +131,25 @@ pub fn get_database_from_input_fn(input: &ItemFn) -> Database {
     } else if cfg!(feature = "any") {
         return Database::Any;
     }
-    let db = input.attrs.iter()
-        .find(|attr| attr.path.is_ident("database"))
-        .map(|attr| {
-            let name = attr.parse_args::<syn::LitStr>().unwrap().value();
-            match name.to_lowercase().as_str() {
+    let mut res = None;
+    input.attrs.iter()
+        .filter(|attr| attr.path.is_ident("db"))
+        .for_each(|attr| {
+            if res.is_some() {
+                panic!("More than one `db` attribute was found")
+            }
+            let name = attr.parse_args::<syn::LitStr>().expect("Expected #[db(\"postgres\")]").value();
+            let db = match name.to_lowercase().as_str() {
                 "postgres" | "postgresql" => Database::Postgres,
                 "mysql" => Database::Mysql,
                 "sqlite" => Database::Sqlite,
                 "any" => Database::Any,
-                _ => panic!("`database`: {name} is not valid. Valid values: 'postgres', 'mysql', 'sqlite', 'any'")
-            }
+                _ => panic!("`db`: {name} is not valid. Valid values: 'postgres', 'mysql', 'sqlite', 'any'")
+            };
+            res.replace(db);
         })
-        .expect("Missing `database` attribute");
-    db
+        ;
+    res.expect("Missing `db` attribute")
 }
 
 

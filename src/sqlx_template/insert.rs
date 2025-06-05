@@ -37,7 +37,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
     }
 
     let table_name = get_table_name(&ast);
-    let db = db.unwrap_or(get_database_from_ast(&ast));
+    let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
     let sql_fields = fields
         .iter()
         .map(|f| f.to_string())

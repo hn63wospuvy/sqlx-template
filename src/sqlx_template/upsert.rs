@@ -16,7 +16,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
         None => quote! {#struct_name},
     };
     let table_name = get_table_name(&ast);
-    let db = db.unwrap_or(get_database_from_ast(&ast));
+    let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
     if !matches!(db, Database::Postgres) {
         panic!("`tp_upsert` only support for Postgres")
     }

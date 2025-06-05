@@ -26,7 +26,7 @@ pub fn derive_update(
         None => quote! {#struct_name},
     };
     let table_name = get_table_name(&ast);
-    let db = db.unwrap_or(get_database_from_ast(&ast));
+    let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
 
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
