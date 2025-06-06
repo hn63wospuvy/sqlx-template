@@ -71,7 +71,7 @@ pub(super) fn get_scope(ast: &DeriveInput) -> Scope {
     match scopes.len() {
         0 => Scope::default(), // Default is struct scope
         1 => scopes.pop().unwrap(),
-        _ => panic!("More than one table_name attribute was found"),
+        _ => panic!("More than one `tp_scope` attribute was found"),
     }
 }
 
