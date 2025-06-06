@@ -420,13 +420,13 @@ pub fn tp_gen(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 ///
 /// ```rust
 /// #[derive(TableName)]
-/// #[table_name = "<table_name>"]
+/// #[table_name("<table_name>")]
 /// pub struct <StructName> { ... }
 /// ```
 ///
 /// # Attributes
 ///
-/// - `table_name`: Specifies the name of the table as a string (e.g., `#[table_name = "users"]`).
+/// - `table`: Specifies the name of the table as a string (e.g., `#[table("users")]`).
 ///
 /// # Function Signature
 ///
@@ -436,7 +436,7 @@ pub fn tp_gen(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 ///
 /// ```rust
 /// #[derive(TableName)]
-/// #[table_name = "users"]
+/// #[table("users")]
 /// pub struct User {
 ///     pub id: i32,
 ///     pub name: String,
@@ -447,7 +447,7 @@ pub fn tp_gen(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 /// fn main() {
 ///     assert_eq!(User::table_name(), "users");
 /// }
-#[proc_macro_derive(TableName, attributes(table_name))]
+#[proc_macro_derive(TableName, attributes(table))]
 pub fn table_name_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::table_name_derive(&input) {

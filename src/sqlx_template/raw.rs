@@ -609,7 +609,6 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             // generated
         },
     };
-    dbg!(&gen.to_string());
     let res = super::gen_with_doc(gen);
     Ok(res)
 }
