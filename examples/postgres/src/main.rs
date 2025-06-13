@@ -191,6 +191,7 @@ pub struct User {
     pub password: String,
     pub org: Option<i32>,
     pub active: bool,
+    pub group: Option<String>,
     #[auto]
     pub version: i32,
     pub created_by: Option<String>,

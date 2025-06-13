@@ -40,7 +40,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
     let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
     let sql_fields = fields
         .iter()
-        .map(|f| f.to_string())
+        .map(|f| super::check_column_name(f.to_string(), db))
         .collect::<Vec<_>>()
         .join(", ");
     let sql_placeholders = (1..=fields.len())
@@ -48,15 +48,13 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "INSERT INTO {}({}) VALUES ({})",
-        table_name, sql_fields, sql_placeholders
+        "INSERT INTO {table_name}({sql_fields}) VALUES ({sql_placeholders})"
     );
-
+    super::check_valid_sql(&sql, db);
     let sql_return = format!(
-        "INSERT INTO {}({}) VALUES ({}) RETURNING *",
-        table_name, sql_fields, sql_placeholders
+        "INSERT INTO {table_name}({sql_fields}) VALUES ({sql_placeholders}) RETURNING *"
     );
-
+    
     let binds = fields.iter().map(|field| {
         quote! {
             .bind(&re.#field)
@@ -83,6 +81,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
 
     
     let insert_returning = if matches!(db, Database::Postgres) {
+        super::check_valid_sql(&sql_return, db);
         let insert_returning = quote! {
             pub async fn insert_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> Result<#struct_name, sqlx::Error> {
                 let sql = #sql_return;

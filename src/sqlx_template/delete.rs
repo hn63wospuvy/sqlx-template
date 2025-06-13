@@ -6,7 +6,7 @@ use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, Path, Token
 };
 
-use crate::{parser, sqlx_template::{get_database_from_ast, Database}};
+use crate::{parser, sqlx_template::{get_database_from_ast, get_field_name_as_column, Database}};
 
 use super::{get_debug_slow_from_table_scope, get_field_name, get_table_name, Scope};
 
@@ -29,7 +29,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
     } else {
         panic!("DeleteTemplate macro only works with structs with named fields");
     };
-    let all_columns_name = all_fields.iter().map(|x| get_field_name(x)).collect::<Vec<_>>();
+    let all_columns_name = all_fields.iter().map(|x| get_field_name_as_column(x, db)).collect::<Vec<_>>();
     let mut functions = Vec::new();
     
     for attr in &ast.attrs {
@@ -141,7 +141,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     .map(|(index, field)| {
                         format!(
                             "{} = ${}",
-                            field.ident.clone().unwrap().to_string(),
+                            get_field_name_as_column(field, db),
                             index + 1
                         )
                     })
@@ -164,11 +164,11 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     if !par_res.placeholder_vars.is_empty() {
                         let all_fields_map = all_fields
                             .iter()
-                            .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                            .map(|x| (get_field_name(x), x.clone()))
                             .collect::<HashMap<_, _>>();
                         let by_fields_map = by_fields
                             .iter()
-                            .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                            .map(|x| (get_field_name(x), x.clone()))
                             .collect::<HashMap<_, _>>();
                         let mut extend_fields = par_res.placeholder_vars.iter()
                         .filter_map(|p| {
@@ -215,7 +215,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 }
                 let mut where_condition =  where_condition.join(" AND ");
                 let sql = format!("DELETE FROM {} WHERE {}", &table_name, where_condition);
-                
+                super::check_valid_sql(&sql, db);
                 let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                 let database = super::get_database_type(db);
                 let generated = quote! {

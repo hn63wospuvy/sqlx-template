@@ -9,7 +9,7 @@ use syn::{
 
 use crate::{
     parser,
-    sqlx_template::{get_database_from_ast, get_field_name, Database},
+    sqlx_template::{get_database_from_ast, get_field_name, get_field_name_as_column, Database},
 };
 
 use super::get_table_name;
@@ -41,7 +41,7 @@ pub fn derive_update(
 
     let all_columns_name = all_fields
         .iter()
-        .map(|x| get_field_name(x))
+        .map(|x| get_field_name_as_column(x, db))
         .collect::<Vec<_>>();
     let mut functions = Vec::new();
     for attr in &ast.attrs {
@@ -184,7 +184,7 @@ pub fn derive_update(
                 if on_fields.is_empty() {
                     let func_name_by_field = by_fields
                         .iter()
-                        .map(|x| x.ident.clone().unwrap().to_string())
+                        .map(|x| get_field_name(x))
                         .collect::<Vec<_>>()
                         .join("_and_");
                     let (fn_name, fn_name_return) = if let Some(fn_name) = fn_name_attr {
@@ -235,7 +235,7 @@ pub fn derive_update(
                         .map(|(index, field)| {
                             format!(
                                 "{} = ${}",
-                                field.ident.clone().unwrap().to_string(),
+                                get_field_name_as_column(field, db),
                                 index + 1
                             )
                         })
@@ -254,14 +254,14 @@ pub fn derive_update(
                         .map(|(index, field)| {
                             format!(
                                 "{} = ${}",
-                                field.ident.clone().unwrap().to_string(),
+                                get_field_name_as_column(field, db),
                                 index + current_idx + 1
                             )
                         })
                         .collect::<Vec<_>>();
                     if version_fields.len() > 0 {
                         let version_field = version_fields.get(0).unwrap();
-                        let arg_name = version_field.ident.as_ref().unwrap();
+                        let arg_name = get_field_name_as_column(version_field, db);
                         let stmt = format!("{arg_name} = ${}", by_fields.len() + current_idx + 1);
                         where_stmt.push(stmt);
                     }
@@ -308,11 +308,11 @@ pub fn derive_update(
                         if !par_res.placeholder_vars.is_empty() {
                             let all_fields_map = all_fields
                                 .iter()
-                                .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                                .map(|x| (get_field_name(x), x.clone()))
                                 .collect::<HashMap<_, _>>();
                             let by_fields_map = by_fields
                                 .iter()
-                                .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                                .map(|x| (get_field_name(x), x.clone()))
                                 .collect::<HashMap<_, _>>();
                             let mut extend_fields = par_res
                                 .placeholder_vars
@@ -373,12 +373,10 @@ pub fn derive_update(
                     let where_stmt = where_stmt.join(" AND ");
 
                     let sql = format!(
-                        "UPDATE {} SET {} WHERE {}",
-                        table_name, set_stmt, where_stmt
+                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
                     );
                     let sql_return = format!(
-                        "UPDATE {} SET {} WHERE {} RETURNING *",
-                        table_name, set_stmt, where_stmt
+                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING *",
                     );
 
                     let binds_return = binds.clone();
@@ -415,12 +413,12 @@ pub fn derive_update(
                 } else {
                     let func_name_by_field = by_fields
                         .iter()
-                        .map(|x| x.ident.clone().unwrap().to_string())
+                        .map(|x| get_field_name(x))
                         .collect::<Vec<_>>()
                         .join("_and_");
                     let func_name_on_field = on_fields
                         .iter()
-                        .map(|x| x.ident.clone().unwrap().to_string())
+                        .map(|x| get_field_name(x))
                         .collect::<Vec<_>>()
                         .join("_and_");
                     let (fn_name, fn_name_return) = if let Some(fn_name) = fn_name_attr {
@@ -475,7 +473,7 @@ pub fn derive_update(
                         .map(|(index, field)| {
                             format!(
                                 "{} = ${}",
-                                field.ident.clone().unwrap().to_string(),
+                                get_field_name_as_column(field, db),
                                 index + 1
                             )
                         })
@@ -494,27 +492,27 @@ pub fn derive_update(
                         .map(|(index, field)| {
                             format!(
                                 "{} = ${}",
-                                field.ident.clone().unwrap().to_string(),
+                                get_field_name_as_column(field, db),
                                 index + current_idx + 1
                             )
                         })
                         .collect::<Vec<_>>();
                     if version_fields.len() > 0 {
                         let version_field = version_fields.get(0).unwrap();
-                        let arg_name = version_field.ident.as_ref().unwrap();
+                        let arg_name = get_field_name_as_column(version_field, db);
                         let stmt = format!("{arg_name} = ${}", by_fields.len() + current_idx + 1);
                         where_stmt.push(stmt);
                     }
                     let where_stmt = where_stmt.join(" AND ");
 
                     let sql = format!(
-                        "UPDATE {} SET {} WHERE {}",
-                        table_name, set_stmt, where_stmt
+                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
                     );
+                    super::check_valid_sql(&sql, db);
                     let sql_return = format!(
-                        "UPDATE {} SET {} WHERE {} RETURNING *",
-                        table_name, set_stmt, where_stmt
+                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING *",
                     );
+                    
                     let set_binds = on_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
@@ -544,6 +542,7 @@ pub fn derive_update(
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                     let database = super::get_database_type(db);
                     let generated = if return_entity && matches!(db, Database::Postgres) {
+                        super::check_valid_sql(&sql_return, db);
                         quote! {
                             pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
                                 let sql = #sql_return;

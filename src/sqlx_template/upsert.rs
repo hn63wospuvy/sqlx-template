@@ -5,7 +5,7 @@ use syn::{
     Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type,
 };
 
-use crate::{parser, sqlx_template::{get_database_from_ast, get_field_name, Database}};
+use crate::{parser, sqlx_template::{check_column_name, get_database_from_ast, get_field_name, get_field_name_as_column, Database}};
 
 use super::get_table_name;
 
@@ -31,7 +31,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
     } else {
         panic!("UpdateTemplate macro only works with structs with named fields");
     };
-    let all_columns_name = all_fields.iter().map(|x| get_field_name(x)).collect::<Vec<_>>();
+    let all_columns_name = all_fields.iter().map(|x| get_field_name_as_column(x, db)).collect::<Vec<_>>();
     let mut functions = Vec::new();
     for attr in &ast.attrs {
         if let Ok(Meta::List(MetaList {
@@ -198,7 +198,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
 
                 let func_name_by_field = by_fields
                     .iter()
-                    .map(|x| x.ident.clone().unwrap().to_string())
+                    .map(|x| get_field_name(x))
                     .collect::<Vec<_>>()
                     .join("_and_");
                 let (fn_name, fn_name_return) = if let Some(fn_name) = fn_name_attr {
@@ -239,7 +239,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
 
                 let insert_field_stmt = insert_fields
                     .iter()
-                    .map(|f| f.to_string())
+                    .map(|f| super::check_column_name(f.to_string(), db))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let insert_placeholders = (1..=insert_fields.len())
@@ -249,7 +249,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
 
                 let conflict_field_stmt = by_fields
                     .iter()
-                    .map(|f| get_field_name(f))
+                    .map(|f| get_field_name_as_column(f, db))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let set_fields = all_fields
@@ -265,7 +265,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 let mut not_excluded_fields = by_fields
                     .iter()
                     .chain(version_fields.iter())
-                    .map(|x| x.ident.clone().unwrap().to_string())
+                    .map(|x| get_field_name(x))
                     .collect::<Vec<_>>()
                     ;
                 
@@ -275,12 +275,15 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     let mut set_stmt = insert_fields
                         .iter()
                         .filter(|x| !not_excluded_fields.contains(&x.to_string()))
-                        .map(|x| format!(" {x} = EXCLUDED.{x}"))
+                        .map(|x| {
+                            let column = check_column_name(x.to_string(), db);
+                            format!(" {column} = EXCLUDED.{x}")
+                        })
                         .collect::<Vec<_>>()
                         ;
                     if !version_fields.is_empty() {
                         let version_set_stmt = version_fields.iter().map(|x| {
-                            let x = get_field_name(x);
+                            let x = get_field_name_as_column(x, db);
                             format!(" {x} = {table_name}.{x} + 1")
                         });
                         set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
@@ -295,14 +298,14 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                             !not_excluded_fields.contains(&name.to_string())
                         })
                         .map(|x| {
-                            let x = get_field_name(x);
+                            let x = get_field_name_as_column(x, db);
                             format!(" {x} = EXCLUDED.{x}")
                         })
                         .collect::<Vec<_>>()
                         ;
                     if !version_fields.is_empty() {
                         let version_set_stmt = version_fields.iter().map(|x| {
-                            let x = get_field_name(x);
+                            let x = get_field_name_as_column(x, db);
                             format!(" {x} = {table_name}.{x} + 1")
                         });
                         set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
@@ -316,14 +319,14 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     .map(|(index, field)| {
                         format!(
                             "{} = ${}",
-                            field.ident.clone().unwrap().to_string(),
+                            get_field_name_as_column(field, db),
                             index + 1
                         )
                     })
                     .collect::<Vec<_>>();
                 if version_fields.len() > 0 {
                     let version_field = version_fields.get(0).unwrap();
-                    let arg_name = version_field.ident.as_ref().unwrap();
+                    let arg_name = get_field_name_as_column(version_field, db);
                     let set_version = format!("{arg_name} = {table_name}.{arg_name} + 1");
                     set_stmt.push(set_version);
                 }
@@ -354,7 +357,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 let sql = format!(
                     "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt}",
                 );
-
+                super::check_valid_sql(&sql, db);
                 let binds = insert_fields.iter().map(|field| {
                     quote! {
                         .bind(&re.#field)
@@ -370,6 +373,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     let sql_return = format!(
                         "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt} RETURNING *",
                     );
+                    super::check_valid_sql(&sql_return, db);
                     let binds_return = binds.clone();
                     quote! {
                         pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> core::result::Result<#struct_name, sqlx::Error> {

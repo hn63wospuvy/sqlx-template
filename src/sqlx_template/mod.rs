@@ -5,7 +5,7 @@ use std::{
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use rust_format::{Formatter, RustFmt};
-use sqlparser::dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::{dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect}, parser::Parser};
 use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident, ItemFn, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, PathArguments, Token, Type
 };
@@ -40,6 +40,32 @@ pub(super) enum Database {
 
 pub(super) fn create_ident(name: &str) -> Ident {
     Ident::new_raw(&name.to_lowercase(), Span::call_site())
+}
+
+pub(super) fn check_column_name(column: String, db: Database) -> String {
+    match db {
+        Database::Postgres | Database::Any => {
+            if ["all", "any", "some", "none", "between", "in", "like", "ilike", "similar", "order", "group", "where", "limit", "offset"].contains(&column.to_lowercase().as_str()) {
+                format!("\"{}\"", column)
+            } else {
+                column
+            }
+        },
+        Database::Mysql => {
+            if ["add", "all", "alter", "and", "as", "asc", "between", "by", "case", "create", "database", "delete", "desc", "distinct", "drop", "from", "group", "having", "in", "insert", "into", "join", "left", "like", "limit", "not", "null", "or", "order", "select", "set", "table", "update", "values", "where"].contains(&column.to_lowercase().as_str()) {
+                format!("`{}`", column)
+            } else {
+                column
+            }
+        },
+        Database::Sqlite => {
+            if ["abort", "action", "add", "after", "all", "alter", "analyze", "and", "as", "asc", "attach", "autoincrement", "before", "begin", "between", "by", "cascade", "case", "cast", "check", "collate", "column", "commit", "conflict", "constraint", "create", "cross", "current_date", "current_time", "current_timestamp", "database", "default", "deferrable", "deferred", "delete", "desc", "detach", "distinct", "drop", "each", "else", "end", "escape", "except", "exclusive", "exists", "explain", "fail", "for", "foreign", "from", "full", "glob", "group", "having", "if", "ignore", "immediate", "in", "index", "indexed", "initially", "inner", "insert", "instead", "intersect", "into", "is", "isnull", "join", "key", "left", "like", "limit", "match", "natural", "no", "not", "notnull", "null", "of", "offset", "on", "or", "order", "outer", "plan", "pragma", "primary", "query", "raise", "recursive", "references", "regexp", "reindex", "release", "rename", "replace", "restrict", "right", "rollback", "row", "savepoint", "select", "set", "table", "temp", "temporary", "then", "to", "transaction", "trigger", "union", "unique", "update", "using", "vacuum", "values", "view", "virtual", "when", "where", "with", "without"].contains(&column.to_lowercase().as_str()) {
+                format!("\"{column}\"")
+            } else {
+                column
+            }
+        }
+    }
 }
 
 pub(super) fn get_scope(ast: &DeriveInput) -> Scope {
@@ -356,6 +382,18 @@ pub fn contains(fields: &[syn::Field], field: &syn::Field) -> bool {
 
 pub fn get_field_name(field: &syn::Field) -> String {
     field.ident.clone().unwrap().to_string()
+}
+
+pub fn get_field_name_as_column(field: &syn::Field, db: Database) -> String {
+    check_column_name(field.ident.clone().unwrap().to_string(), db)
+}
+
+pub fn check_valid_sql(sql: &str, db: Database) {
+    let dialect = get_database_dialect(db);
+    let parse = Parser::parse_sql(dialect.as_ref(), sql);
+    if parse.is_err() {
+        panic!("Invalid generated query: {sql}. Please report")
+    }
 }
 
 pub fn has_duplicates(vec: &Vec<Field>) -> bool {

@@ -9,7 +9,7 @@ use syn::{
 
 use crate::{
     parser,
-    sqlx_template::{get_database_from_ast, Database},
+    sqlx_template::{get_database_from_ast, get_field_name, get_field_name_as_column, Database},
 };
 
 use super::{get_database_type, get_table_name, Scope};
@@ -261,10 +261,11 @@ fn build_default_find_all_query(
 ) -> proc_macro2::TokenStream {
     let all_fields_str = all_fields
         .iter()
-        .filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string())))
+        .map(|x| get_field_name_as_column(x, db))
         .collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
     let sql = format!("SELECT {all_fields_str} FROM {table_name}");
+    super::check_valid_sql(&sql, db);
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let expanded = quote! {
@@ -292,10 +293,11 @@ fn build_default_find_page_all_query(
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let all_fields_str = all_fields
         .iter()
-        .filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string())))
+        .map(|x| get_field_name_as_column(x, db))
         .collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
     let sql = format!("SELECT {all_fields_str} FROM {table_name} LIMIT $1 OFFSET $2");
+    super::check_valid_sql(&sql, db);
     let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
     let expanded = quote! {
         pub async fn find_page_all<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
@@ -379,7 +381,7 @@ fn build_query(
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let all_fields_str = all_fields
         .iter()
-        .filter_map(|x| x.ident.clone().and_then(|y| Some(y.to_string())))
+        .map(|x| get_field_name_as_column(x, db))
         .collect::<Vec<String>>();
     let all_fields_str_join = all_fields_str.join(", ");
     match (
@@ -395,7 +397,7 @@ fn build_query(
                 order_fields
                     .iter()
                     .map(|f| {
-                        let mut field_str = f.0.ident.as_ref().unwrap().to_string();
+                        let mut field_str = get_field_name(&f.0);
                         if f.1 {
                             field_str.push_str("_asc")
                         } else {
@@ -445,6 +447,7 @@ fn build_query(
                 .join(", ");
             let sql =
                 format!("SELECT {all_fields_str_join} FROM {table_name} ORDER BY {order_str}");
+            super::check_valid_sql(&sql, db);
             let count_sql = format!("SELECT COUNT(1) FROM {table_name} ORDER BY {order_str}");
             let generated = match qtype {
                 SelectType::All => {
@@ -622,7 +625,7 @@ fn build_query(
                 .map(|(index, field)| {
                     format!(
                         "{} = ${}",
-                        field.ident.clone().unwrap().to_string(),
+                        get_field_name_as_column(field, db),
                         index + 1
                     )
                 })
@@ -655,11 +658,11 @@ fn build_query(
                 if !par_res.placeholder_vars.is_empty() {
                     let all_fields_map = all_fields
                         .iter()
-                        .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                        .map(|x| (get_field_name(x), x.clone()))
                         .collect::<HashMap<_, _>>();
                     let by_fields_map = by_fields
                         .iter()
-                        .map(|x| (x.ident.clone().unwrap().to_string(), x.clone()))
+                        .map(|x| (get_field_name(x), x.clone()))
                         .collect::<HashMap<_, _>>();
                     let mut extend_fields = par_res
                         .placeholder_vars
@@ -742,7 +745,7 @@ fn build_query(
                     &table_name, where_condition, order_str
                 )
             };
-
+            super::check_valid_sql(&sql, db);
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
