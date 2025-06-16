@@ -45,22 +45,73 @@ pub(super) fn create_ident(name: &str) -> Ident {
 pub(super) fn check_column_name(column: String, db: Database) -> String {
     match db {
         Database::Postgres | Database::Any => {
-            if ["all", "any", "some", "none", "between", "in", "like", "ilike", "similar", "order", "group", "where", "limit", "offset"].contains(&column.to_lowercase().as_str()) {
+            // Reference: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
+            if [
+                "all", "analyse", "analyze", "and", "any", "array", "as", "asc", "asymmetric", "authorization",
+                "binary", "both", "case", "cast", "check", "collate", "collation", "column", "concurrently",
+                "constraint", "create", "cross", "current_catalog", "current_date", "current_role", "current_schema",
+                "current_time", "current_timestamp", "current_user", "default", "deferrable", "desc", "distinct",
+                "do", "else", "end", "except", "false", "fetch", "for", "foreign", "freeze", "from", "full", "grant",
+                "group", "having", "ilike", "in", "initially", "inner", "intersect", "into", "is", "isnull", "join",
+                "lateral", "leading", "left", "like", "limit", "localtime", "localtimestamp", "natural", "not",
+                "notnull", "null", "offset", "on", "only", "or", "order", "outer", "overlaps", "placing", "primary",
+                "references", "returning", "right", "select", "session_user", "similar", "some", "symmetric", "table",
+                "then", "to", "trailing", "true", "union", "unique", "user", "using", "variadic", "verbose", "when",
+                "where", "window", "with", "authorization", "between"
+            ].contains(&column.to_lowercase().as_str()) {
                 format!("\"{}\"", column)
             } else {
                 column
             }
         },
         Database::Mysql => {
-            if ["add", "all", "alter", "and", "as", "asc", "between", "by", "case", "create", "database", "delete", "desc", "distinct", "drop", "from", "group", "having", "in", "insert", "into", "join", "left", "like", "limit", "not", "null", "or", "order", "select", "set", "table", "update", "values", "where"].contains(&column.to_lowercase().as_str()) {
+            // Reference: https://dev.mysql.com/doc/refman/8.0/en/keywords.html
+            if [
+                "add", "all", "alter", "analyze", "and", "as", "asc", "before", "between", "both", "by", "call",
+                "cascade", "case", "change", "check", "column", "condition", "constraint", "continue", "convert",
+                "create", "cross", "current_date", "current_time", "current_timestamp", "current_user", "cursor",
+                "database", "databases", "day_hour", "day_microsecond", "day_minute", "day_second", "dec", "declare",
+                "default", "delayed", "delete", "desc", "describe", "deterministic", "distinct", "distinctrow", "div",
+                "drop", "dual", "each", "else", "elseif", "enclosed", "escaped", "exists", "exit", "explain", "false",
+                "fetch", "for", "force", "foreign", "from", "fulltext", "generated", "get", "grant", "group", "having",
+                "high_priority", "if", "ignore", "in", "index", "infile", "inner", "inout", "insensitive", "insert",
+                "int", "integer", "interval", "into", "is", "iterate", "join", "key", "keys", "kill", "leading", "leave",
+                "left", "like", "limit", "linear", "lines", "load", "localtime", "localtimestamp", "lock", "long",
+                "loop", "low_priority", "master_bind", "master_ssl_verify_server_cert", "match", "maxvalue", "mediumint",
+                "middleint", "minute_microsecond", "minute_second", "mod", "modifies", "natural", "not", "no_write_to_binlog",
+                "null", "numeric", "on", "optimize", "optimizer_costs", "option", "optionally", "or", "order", "out",
+                "outer", "outfile", "partition", "precision", "primary", "procedure", "purge", "range", "read", "reads",
+                "read_write", "real", "references", "regexp", "release", "rename", "repeat", "replace", "require",
+                "resignal", "restrict", "return", "revoke", "right", "rlike", "schema", "schemas", "second_microsecond",
+                "select", "sensitive", "separator", "set", "show", "signal", "smallint", "spatial", "specific", "sql",
+                "sqlexception", "sqlstate", "sqlwarning", "sql_big_result", "sql_calc_found_rows", "sql_small_result",
+                "ssl", "starting", "stored", "straight_join", "table", "terminated", "then", "tinyint", "to", "trailing",
+                "trigger", "true", "undo", "union", "unique", "unlock", "unsigned", "update", "usage", "use", "using",
+                "utc_date", "utc_time", "utc_timestamp", "values", "varbinary", "varchar", "varcharacter", "varying",
+                "when", "where", "while", "with", "write", "xor", "year_month", "zerofill"
+            ].contains(&column.to_lowercase().as_str()) {
                 format!("`{}`", column)
             } else {
                 column
             }
         },
         Database::Sqlite => {
-            if ["abort", "action", "add", "after", "all", "alter", "analyze", "and", "as", "asc", "attach", "autoincrement", "before", "begin", "between", "by", "cascade", "case", "cast", "check", "collate", "column", "commit", "conflict", "constraint", "create", "cross", "current_date", "current_time", "current_timestamp", "database", "default", "deferrable", "deferred", "delete", "desc", "detach", "distinct", "drop", "each", "else", "end", "escape", "except", "exclusive", "exists", "explain", "fail", "for", "foreign", "from", "full", "glob", "group", "having", "if", "ignore", "immediate", "in", "index", "indexed", "initially", "inner", "insert", "instead", "intersect", "into", "is", "isnull", "join", "key", "left", "like", "limit", "match", "natural", "no", "not", "notnull", "null", "of", "offset", "on", "or", "order", "outer", "plan", "pragma", "primary", "query", "raise", "recursive", "references", "regexp", "reindex", "release", "rename", "replace", "restrict", "right", "rollback", "row", "savepoint", "select", "set", "table", "temp", "temporary", "then", "to", "transaction", "trigger", "union", "unique", "update", "using", "vacuum", "values", "view", "virtual", "when", "where", "with", "without"].contains(&column.to_lowercase().as_str()) {
-                format!("\"{column}\"")
+            // Reference: https://www.sqlite.org/lang_keywords.html
+            if [
+                "abort", "action", "add", "after", "all", "alter", "analyze", "and", "as", "asc", "attach", "autoincrement",
+                "before", "begin", "between", "by", "cascade", "case", "cast", "check", "collate", "column", "commit",
+                "conflict", "constraint", "create", "cross", "current_date", "current_time", "current_timestamp", "database",
+                "default", "deferrable", "deferred", "delete", "desc", "detach", "distinct", "drop", "each", "else", "end",
+                "escape", "except", "exclusive", "exists", "explain", "fail", "for", "foreign", "from", "full", "glob",
+                "group", "having", "if", "ignore", "immediate", "in", "index", "indexed", "initially", "inner", "insert",
+                "instead", "intersect", "into", "is", "isnull", "join", "key", "left", "like", "limit", "match", "natural",
+                "no", "not", "notnull", "null", "of", "offset", "on", "or", "order", "outer", "plan", "pragma", "primary",
+                "query", "raise", "recursive", "references", "regexp", "reindex", "release", "rename", "replace", "restrict",
+                "right", "rollback", "row", "savepoint", "select", "set", "table", "temp", "temporary", "then", "to",
+                "transaction", "trigger", "union", "unique", "update", "using", "vacuum", "values", "view", "virtual",
+                "when", "where", "with", "without"
+            ].contains(&column.to_lowercase().as_str()) {
+                format!("\"{}\"", column)
             } else {
                 column
             }
