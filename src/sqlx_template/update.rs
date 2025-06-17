@@ -359,7 +359,7 @@ pub fn derive_update(
                                 args_vec.into_iter().filter_map(|x| x).collect::<Vec<_>>();
                             fn_args.append(&mut args_vec);
                             binds.append(&mut bind_vec);
-                            let start_counter = by_fields.len() + 1;
+                            let start_counter = by_fields.len() + set_fields.len() + 1;
                             let (sql, params) = parser::replace_placeholder(
                                 &where_stmt_str,
                                 par_res.placeholder_vars,
@@ -503,15 +503,9 @@ pub fn derive_update(
                         let stmt = format!("{arg_name} = ${}", by_fields.len() + current_idx + 1);
                         where_stmt.push(stmt);
                     }
-                    let where_stmt = where_stmt.join(" AND ");
+                    
 
-                    let sql = format!(
-                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
-                    );
-                    super::check_valid_sql(&sql, db);
-                    let sql_return = format!(
-                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING *",
-                    );
+
                     
                     let set_binds = on_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
@@ -537,6 +531,95 @@ pub fn derive_update(
                     binds.append(&mut where_binds.collect::<Vec<_>>());
                     binds.append(&mut version_binds.collect::<Vec<_>>());
 
+                    if let Some(where_stmt_str) = where_stmt_str {
+                        let par_res = parser::get_columns_and_compound_ids(
+                            &where_stmt_str,
+                            super::get_database_dialect(db),
+                        )
+                        .unwrap();
+                        for col in &par_res.columns {
+                            if !all_columns_name.contains(&col) {
+                                panic!("Invalid where statement: {col} column is not found in field list");
+                            }
+                        }
+                        for table in &par_res.tables {
+                            if table != &table_name {
+                                panic!("Invalid where statement: {table} is not allowed. Only {table_name} are permitted.");
+                            }
+                        }
+                        if !par_res.placeholder_vars.is_empty() {
+                            let all_fields_map = all_fields
+                                .iter()
+                                .map(|x| (get_field_name(x), x.clone()))
+                                .collect::<HashMap<_, _>>();
+                            let by_fields_map = by_fields
+                                .iter()
+                                .map(|x| (get_field_name(x), x.clone()))
+                                .collect::<HashMap<_, _>>();
+                            let mut extend_fields = par_res
+                                .placeholder_vars
+                                .iter()
+                                .filter_map(|p| {
+                                    let p = &p[1..];
+                                    if !all_fields_map.contains_key(p) {
+                                        panic!("Field {p} is not found in list columns name");
+                                    }
+
+                                    all_fields_map.get(p).map(|field| {
+                                        let arg_name = field.ident.as_ref().unwrap();
+                                        let arg_type = &field.ty;
+                                        if by_fields_map.contains_key(p) {
+                                            (
+                                                quote! {
+                                                    .bind(&#arg_name)
+                                                },
+                                                None,
+                                            )
+                                        } else if &arg_type.to_token_stream().to_string()
+                                            == "String"
+                                        {
+                                            (
+                                                quote! {
+                                                    .bind(&#arg_name)
+                                                },
+                                                Some(quote! { #arg_name: &str }),
+                                            )
+                                        } else {
+                                            (
+                                                quote! {
+                                                    .bind(&#arg_name)
+                                                },
+                                                Some(quote! { #arg_name: &#arg_type }),
+                                            )
+                                        }
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            let (mut bind_vec, mut args_vec) =
+                                extend_fields.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
+                            let mut args_vec =
+                                args_vec.into_iter().filter_map(|x| x).collect::<Vec<_>>();
+                            fn_args.append(&mut args_vec);
+                            binds.append(&mut bind_vec);
+                            let start_counter = by_fields.len() + on_fields.len() + 1;
+                            let (sql, params) = parser::replace_placeholder(
+                                &where_stmt_str,
+                                par_res.placeholder_vars,
+                                Some(start_counter as i32),
+                            );
+                            where_stmt.push(sql);
+                        } else {
+                            where_stmt.push(where_stmt_str);
+                        }
+                    }
+                    let where_stmt = where_stmt.join(" AND ");
+                    let sql = format!(
+                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
+                    );
+                    super::check_valid_sql(&sql, db);
+                    let sql_return = format!(
+                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING *",
+                    );
                     let binds_return = binds.clone();
 
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
