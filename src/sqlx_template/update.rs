@@ -122,6 +122,8 @@ pub fn derive_update(
                                 if let Lit::Bool(lit) = &nv.lit {
                                     let lit = lit.value();
                                     return_entity = lit;
+                                } else {
+                                    return_entity = true; 
                                 }
                             } else if nv.path.is_ident("where") {
                                 if let Lit::Str(lit) = &nv.lit {
@@ -175,9 +177,7 @@ pub fn derive_update(
                         intersection
                     );
                 }
-                if by_fields.is_empty() {
-                    panic!("'by' fields must not be empty");
-                }
+
                 by_fields.sort_by_key(|x| x.ident.clone());
                 on_fields.sort_by_key(|x| x.ident.clone());
 
@@ -212,9 +212,9 @@ pub fn derive_update(
                             let arg_name = field.ident.as_ref().unwrap();
                             let arg_type = &field.ty;
                             if &arg_type.to_token_stream().to_string() == "String" {
-                                quote! { #arg_name: &str }
+                                quote! { #arg_name: &'c str }
                             } else {
-                                quote! { #arg_name: &#arg_type }
+                                quote! { #arg_name: &'c #arg_type }
                             }
                         })
                         .collect::<Vec<_>>();
@@ -275,7 +275,7 @@ pub fn derive_update(
                     let where_binds = by_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
-                            .bind(&#field_name)
+                            .bind(#field_name)
                         }
                     });
 
@@ -329,7 +329,7 @@ pub fn derive_update(
                                         if by_fields_map.contains_key(p) {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
                                                 None,
                                             )
@@ -338,16 +338,16 @@ pub fn derive_update(
                                         {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
-                                                Some(quote! { #arg_name: &str }),
+                                                Some(quote! { #arg_name: &'c str }),
                                             )
                                         } else {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
-                                                Some(quote! { #arg_name: &#arg_type }),
+                                                Some(quote! { #arg_name: &'c #arg_type }),
                                             )
                                         }
                                     })
@@ -370,6 +370,11 @@ pub fn derive_update(
                             where_stmt.push(where_stmt_str);
                         }
                     }
+
+                    if by_fields.is_empty() && where_stmt.is_empty() {
+                        panic!("`by` fields or `where` attribute must not empty");
+                    }
+
                     let where_stmt = where_stmt.join(" AND ");
 
                     let sql = format!(
@@ -382,22 +387,27 @@ pub fn derive_update(
                     let binds_return = binds.clone();
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                     let database = super::get_database_type(db);
+                    let args_signature = if fn_args.is_empty() {
+                        quote! {}
+                    } else {
+                        quote! {#(#fn_args),* ,}
+                    };
                     let generated = if return_entity && matches!(db, Database::Postgres) {
                         quote! {
-                            pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , re: &#struct_name, conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
+                            pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature re: &'c #struct_name, conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#struct_name, sqlx::Error>> {
                                 let sql = #sql_return;
                                 #dbg_before
-                                let res = sqlx::query_as::<_, #struct_name>(sql)
+                                let query_result = sqlx::query_as::<_, #struct_name>(sql)
                                     #(#binds_return)*
-                                    .fetch_one(conn)
-                                    .await;
+                                    .fetch(conn)
+                                    ;
                                 #dbg_after
-                                Ok(res?)
+                                query_result
                             }
                         }
                     } else {
                         quote! {
-                            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , re: &#struct_name, conn: E) -> core::result::Result<u64, sqlx::Error> {
+                            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature re: &#struct_name, conn: E) -> core::result::Result<u64, sqlx::Error> {
                                 let sql = #sql;
                                 #dbg_before
                                 let query = sqlx::query(sql)
@@ -448,14 +458,14 @@ pub fn derive_update(
                         .map(|field| {
                             let arg_name = field.ident.as_ref().unwrap();
                             let arg_type = &field.ty;
-                            quote! { #arg_name: & #arg_type }
+                            quote! { #arg_name: &'c #arg_type }
                         })
                         .collect::<Vec<_>>();
 
                     on_fields.iter().for_each(|field| {
                         let arg_name = field.ident.as_ref().unwrap();
                         let arg_type = &field.ty;
-                        let arg = quote! { #arg_name: & #arg_type };
+                        let arg = quote! { #arg_name: &'c #arg_type };
                         fn_args.push(arg);
                     });
 
@@ -463,7 +473,7 @@ pub fn derive_update(
                         let version_field = version_fields.get(0).unwrap();
                         let arg_name = version_field.ident.as_ref().unwrap();
                         let arg_type = &version_field.ty;
-                        let ts = quote! { #arg_name: & #arg_type };
+                        let ts = quote! { #arg_name: &'c #arg_type };
                         fn_args.push(ts);
                     }
 
@@ -510,20 +520,20 @@ pub fn derive_update(
                     let set_binds = on_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
-                            .bind(&#field_name)
+                            .bind(#field_name)
                         }
                     });
 
                     let where_binds = by_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
-                            .bind(&#field_name)
+                            .bind(#field_name)
                         }
                     });
                     let version_binds = version_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
-                            .bind(&#field_name)
+                            .bind(#field_name)
                         }
                     });
 
@@ -582,14 +592,14 @@ pub fn derive_update(
                                                 quote! {
                                                     .bind(&#arg_name)
                                                 },
-                                                Some(quote! { #arg_name: &str }),
+                                                Some(quote! { #arg_name: &'c str }),
                                             )
                                         } else {
                                             (
                                                 quote! {
                                                     .bind(&#arg_name)
                                                 },
-                                                Some(quote! { #arg_name: &#arg_type }),
+                                                Some(quote! { #arg_name: &'c #arg_type }),
                                             )
                                         }
                                     })
@@ -612,6 +622,9 @@ pub fn derive_update(
                             where_stmt.push(where_stmt_str);
                         }
                     }
+                    if by_fields.is_empty() && where_stmt.is_empty() {
+                        panic!("`by` fields or `where` attribute must not empty");
+                    }
                     let where_stmt = where_stmt.join(" AND ");
                     let sql = format!(
                         "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
@@ -624,23 +637,29 @@ pub fn derive_update(
 
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                     let database = super::get_database_type(db);
+                    let args_signature = if fn_args.is_empty() {
+                        quote! {}
+                    } else {
+                        quote! {#(#fn_args),* ,}
+                    };
                     let generated = if return_entity && matches!(db, Database::Postgres) {
                         super::check_valid_single_sql(&sql_return, db);
                         quote! {
-                            pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
+                            pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#struct_name, sqlx::Error>> {
                                 let sql = #sql_return;
                                 #dbg_before
-                                let res = sqlx::query_as::<_, #struct_name>(sql)
+                                let query_result = sqlx::query_as::<_, #struct_name>(sql)
                                     #(#binds_return)*
-                                    .fetch_one(conn)
-                                    .await;
+                                    .fetch(conn)
+                                    ;
                                 #dbg_after
-                                Ok(res?)
+                                query_result
                             }
+                            
                         }
                     } else {
                         quote! {
-                            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> core::result::Result<u64, sqlx::Error> {
+                            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature conn: E) -> core::result::Result<u64, sqlx::Error> {
                                 let sql = #sql;
                                 #dbg_before
                                 let query = sqlx::query(sql)

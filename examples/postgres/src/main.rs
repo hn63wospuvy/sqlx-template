@@ -114,8 +114,16 @@ async fn main() {
     user.updated_by = Some("abc".into());
     User::update_user(&user.id, &user, &mut *tx).await.unwrap();
 
+
     User::upsert_by_email(&user,  &mut *tx).await.unwrap();
+
     tx.commit().await.unwrap();
+
+    
+    let mut user_updated_stream = User::update_user_stream(&user.id, &user, &db).await;
+    while let Some(Ok(o)) = user_updated_stream.next().await {
+        println!("Updated user: {o:#?}");
+    }
 
     let user = User::find_one_by_email(&"user2@abc.com".to_string(), &db).await.unwrap().unwrap();
     println!("User after update: {user:#?}");
@@ -186,6 +194,7 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_select_page(by = "org", order = "id desc, org desc")]
 #[tp_select_count(by = "id, email")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_stream", returning = true)]
 #[tp_select_stream(order = "id desc")]
 pub struct User {
     #[auto]

@@ -452,7 +452,7 @@ fn build_query(
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> core::result::Result<Vec<#struct_name>, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
                             let query_result = sqlx::query_as::<_, #struct_name>(sql)
@@ -465,7 +465,7 @@ fn build_query(
                 }
                 SelectType::One => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> Result<Option<#struct_name>, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> core::result::Result<Option<#struct_name>, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
                             let query_result = sqlx::query_as::<_, #struct_name>(sql)
@@ -492,8 +492,8 @@ fn build_query(
                         .bind(paging_offset)
                     });
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>( page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
-                            pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( paging_offset: i64, paging_limit: i32, conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>( page: impl Into<(i64, i32, bool)>, conn: E) -> core::result::Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
+                            pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( paging_offset: i64, paging_limit: i32, conn: E) -> core::result::Result<Vec<#struct_name>, sqlx::Error> {
                                 let sql = #paging_sql;
                                 #dbg_before
                                 let query_result = sqlx::query_as::<_, #struct_name>(sql)
@@ -503,7 +503,7 @@ fn build_query(
                                 #dbg_after
                                 Ok(query_result?)
                             }
-                            pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> Result<i64, sqlx::Error> {
+                            pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> core::result::Result<i64, sqlx::Error> {
                                 let sql = #sql;
                                 #dbg_before
                                 let count = sqlx::query_scalar(sql)
@@ -536,7 +536,7 @@ fn build_query(
                 }
                 SelectType::Stream => {
                     quote! {
-                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> futures::stream::BoxStream<'c, Result<#struct_name, sqlx::Error>> {
+                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#struct_name, sqlx::Error>> {
                             let sql = #sql;
                             #dbg_before
                             let query_result = sqlx::query_as(sql)

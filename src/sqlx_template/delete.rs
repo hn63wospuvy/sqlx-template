@@ -96,22 +96,41 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 }
 
                 by_fields.sort_by_key(|x| x.ident.clone());
-                let fn_name = if let Some(fn_name) = fn_name_attr {
-                    Ident::new(
-                        &fn_name,
-                        proc_macro2::Span::call_site(),
+                let (fn_name , fn_name_return)= if let Some(fn_name) = fn_name_attr {
+                    (
+                        Ident::new(
+                            &fn_name,
+                            proc_macro2::Span::call_site(),
+                        ),
+                        Ident::new(
+                            &fn_name,
+                            proc_macro2::Span::call_site(),
+                        )
                     )
                 } else {
-                    Ident::new(
-                        &format!(
-                            "delete_by_{}",
-                            by_fields
-                                .iter()
-                                .map(|f| f.ident.as_ref().expect("Must be ident").to_string())
-                                .collect::<Vec<_>>()
-                                .join("_and_")
+                    (
+                        Ident::new(
+                            &format!(
+                                "delete_by_{}",
+                                by_fields
+                                    .iter()
+                                    .map(|f| f.ident.as_ref().expect("Must be ident").to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("_and_")
+                            ),
+                            proc_macro2::Span::call_site(),
                         ),
-                        proc_macro2::Span::call_site(),
+                        Ident::new(
+                            &format!(
+                                "delete_by_{}_return",
+                                by_fields
+                                    .iter()
+                                    .map(|f| f.ident.as_ref().expect("Must be ident").to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("_and_")
+                            ),
+                            proc_macro2::Span::call_site(),
+                        )
                     )
                 };
 
@@ -121,16 +140,16 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         let arg_name = field.ident.as_ref().unwrap();
                         let arg_type = &field.ty;
                         if &arg_type.to_token_stream().to_string() == "String" {
-                            quote! { #arg_name: &str }
+                            quote! { #arg_name: &'c str }
                         } else {
-                            quote! { #arg_name: &#arg_type }
+                            quote! { #arg_name: &'c #arg_type }
                         }
                     })
                     .collect::<Vec<_>>();
                 let mut binds = by_fields.iter().map(|field| {
                     let arg_name = field.ident.as_ref().unwrap();
                     quote! {
-                        .bind(&#arg_name)
+                        .bind(#arg_name)
                     }
                 }).collect::<Vec<_>>();
                 let mut where_condition = by_fields
@@ -181,20 +200,20 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                                 let arg_type = &field.ty;
                                 if by_fields_map.contains_key(p) {
                                     (quote! {
-                                        .bind(&#arg_name)
+                                        .bind(#arg_name)
                                     }, 
                                     None)
                                 }
                                 else if &arg_type.to_token_stream().to_string() == "String" {
                                     (quote! {
-                                        .bind(&#arg_name)
+                                        .bind(#arg_name)
                                     }, 
-                                    Some(quote! { #arg_name: &str }))
+                                    Some(quote! { #arg_name: &'c str }))
                                 } else {
                                     (quote! {
-                                        .bind(&#arg_name)
+                                        .bind(#arg_name)
                                     }, 
-                                    Some(quote! { #arg_name: &#arg_type }))
+                                    Some(quote! { #arg_name: &'c #arg_type }))
                                 }
                             })
                         }).collect::<Vec<_>>();
@@ -216,6 +235,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 }
                 let mut where_condition =  where_condition.join(" AND ");
                 let sql = format!("DELETE FROM {} WHERE {}", &table_name, where_condition);
+                
                 super::check_valid_single_sql(&sql, db);
                 let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                 let database = super::get_database_type(db);
@@ -224,16 +244,33 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 } else {
                     quote! {#(#fn_args),* ,}
                 };
-                let generated = quote! {
-                    pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature conn: E) -> Result<u64, sqlx::Error> {
-                        let sql = #sql;
-                        #dbg_before
-                        let query = sqlx::query(sql)
-                            #(#binds)*
-                            .execute(conn)
-                            .await;
-                        #dbg_after
-                        Ok(query?.rows_affected())
+                let generated = if return_entity && matches!(db, Database::Postgres) {
+                    let binds_return = binds.clone();
+                    let sql_return = format!("DELETE FROM {} WHERE {} RETURNING *", &table_name, where_condition);
+                    quote! {
+                        pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#struct_name, sqlx::Error>> {
+                            let sql = #sql_return;
+                            #dbg_before
+                            let query_result = sqlx::query_as::<_, #struct_name>(sql)
+                                #(#binds_return)*
+                                .fetch(conn)
+                                ;
+                            #dbg_after
+                            query_result
+                        }
+                    }
+                } else {
+                    quote! {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature conn: E) -> Result<u64, sqlx::Error> {
+                            let sql = #sql;
+                            #dbg_before
+                            let query = sqlx::query(sql)
+                                #(#binds)*
+                                .execute(conn)
+                                .await;
+                            #dbg_after
+                            Ok(query?.rows_affected())
+                        }
                     }
                 };
                 functions.push(super::gen_with_doc(generated));
