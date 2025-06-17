@@ -581,7 +581,7 @@ pub fn derive_update(
                                         if by_fields_map.contains_key(p) {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
                                                 None,
                                             )
@@ -590,14 +590,14 @@ pub fn derive_update(
                                         {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
                                                 Some(quote! { #arg_name: &'c str }),
                                             )
                                         } else {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
                                                 Some(quote! { #arg_name: &'c #arg_type }),
                                             )
