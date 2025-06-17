@@ -9,7 +9,7 @@ use sqlx::types::chrono::Utc;
 #[tp_delete(where = "active = :active and 2 * id > :id", returning = true)]
 // #[tp_select_one(by = "id, sender", order = "id desc", where = "active = :active", fn_name = "get_by_sender_active")]
 #[tp_update(by = "id", where = "groups = :sender", returning = true)]
-#[tp_update(by = "id", on = "content", where = "access = :sender", returning = true)]
+#[tp_update(by = "id", on = "content", where = "access = :sender", returning = "id, sender")]
 // #[tp_update(by = "id", on = "receiver", where = "sender = :sender")]
 // #[tp_upsert(by = "id", on = "sender, content", fn_name = "test1")]
 pub struct Chat {
@@ -26,5 +26,7 @@ pub struct Chat {
 
 
 impl Chat {
-    
+    fn test() {
+        // Chat::update_by_id_on_content_return(id, content, sender, conn)
+    }
 }
