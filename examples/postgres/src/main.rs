@@ -94,6 +94,8 @@ async fn main() {
         .into_page(page_request);
     println!("Page user: {page:#?}");
 
+    let user = User::find_one_by_group(&None, &db).await.unwrap();
+
 
     // Transaction
     let mut tx = db.begin().await.unwrap();
@@ -180,6 +182,7 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_select_all(by = "id, email", order = "id desc")]
 #[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
 #[tp_select_one(by = "email")]
+#[tp_select_one(by = "group")]
 #[tp_select_page(by = "org", order = "id desc, org desc")]
 #[tp_select_count(by = "id, email")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]

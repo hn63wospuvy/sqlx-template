@@ -5,9 +5,11 @@ use sqlx::types::chrono::Utc;
 
 #[derive(PostgresTemplate, FromRow, Default, Clone, Debug)]
 #[table("chats")]
-#[tp_delete(by = "id, active", where = "active = :active and 2 * id > :id")]
+#[tp_select_one(where = "active = true")]
+#[tp_delete(where = "active = :active and 2 * id > :id")]
 // #[tp_select_one(by = "id, sender", order = "id desc", where = "active = :active", fn_name = "get_by_sender_active")]
-// #[tp_upsert(by = "id")]
+// #[tp_update(by = "id", where = "sender = :sender")]
+// #[tp_update(by = "id", on = "receiver", where = "sender = :sender")]
 // #[tp_upsert(by = "id", on = "sender, content", fn_name = "test1")]
 pub struct Chat {
     pub id: i32,
