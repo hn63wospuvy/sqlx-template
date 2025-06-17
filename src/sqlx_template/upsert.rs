@@ -357,7 +357,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 let sql = format!(
                     "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt}",
                 );
-                super::check_valid_sql(&sql, db);
+                super::check_valid_single_sql(&sql, db);
                 let binds = insert_fields.iter().map(|field| {
                     quote! {
                         .bind(&re.#field)
@@ -373,7 +373,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     let sql_return = format!(
                         "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt} RETURNING *",
                     );
-                    super::check_valid_sql(&sql_return, db);
+                    super::check_valid_single_sql(&sql_return, db);
                     let binds_return = binds.clone();
                     quote! {
                         pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> core::result::Result<#struct_name, sqlx::Error> {

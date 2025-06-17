@@ -216,7 +216,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 }
                 let mut where_condition =  where_condition.join(" AND ");
                 let sql = format!("DELETE FROM {} WHERE {}", &table_name, where_condition);
-                super::check_valid_sql(&sql, db);
+                super::check_valid_single_sql(&sql, db);
                 let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                 let database = super::get_database_type(db);
                 let args_signature = if fn_args.is_empty() {

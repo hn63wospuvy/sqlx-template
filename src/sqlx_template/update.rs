@@ -616,7 +616,7 @@ pub fn derive_update(
                     let sql = format!(
                         "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
                     );
-                    super::check_valid_sql(&sql, db);
+                    super::check_valid_single_sql(&sql, db);
                     let sql_return = format!(
                         "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING *",
                     );
@@ -625,7 +625,7 @@ pub fn derive_update(
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                     let database = super::get_database_type(db);
                     let generated = if return_entity && matches!(db, Database::Postgres) {
-                        super::check_valid_sql(&sql_return, db);
+                        super::check_valid_single_sql(&sql_return, db);
                         quote! {
                             pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
                                 let sql = #sql_return;

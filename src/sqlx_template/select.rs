@@ -265,7 +265,7 @@ fn build_default_find_all_query(
         .collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
     let sql = format!("SELECT {all_fields_str} FROM {table_name}");
-    super::check_valid_sql(&sql, db);
+    super::check_valid_single_sql(&sql, db);
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let expanded = quote! {
@@ -297,7 +297,7 @@ fn build_default_find_page_all_query(
         .collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
     let sql = format!("SELECT {all_fields_str} FROM {table_name} LIMIT $1 OFFSET $2");
-    super::check_valid_sql(&sql, db);
+    super::check_valid_single_sql(&sql, db);
     let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
     let expanded = quote! {
         pub async fn find_page_all<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
@@ -447,7 +447,7 @@ fn build_query(
                 .join(", ");
             let sql =
                 format!("SELECT {all_fields_str_join} FROM {table_name} ORDER BY {order_str}");
-            super::check_valid_sql(&sql, db);
+            super::check_valid_single_sql(&sql, db);
             let count_sql = format!("SELECT COUNT(1) FROM {table_name} ORDER BY {order_str}");
             let generated = match qtype {
                 SelectType::All => {
@@ -745,7 +745,7 @@ fn build_query(
                     &table_name, where_condition, order_str
                 )
             };
-            super::check_valid_sql(&sql, db);
+            super::check_valid_single_sql(&sql, db);
             let args_signature = if fn_args.is_empty() {
                 quote! {}
             } else {

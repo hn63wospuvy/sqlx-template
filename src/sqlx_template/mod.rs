@@ -439,12 +439,16 @@ pub fn get_field_name_as_column(field: &syn::Field, db: Database) -> String {
     check_column_name(field.ident.clone().unwrap().to_string(), db)
 }
 
-pub fn check_valid_sql(sql: &str, db: Database) {
+pub fn check_valid_single_sql(sql: &str, db: Database) {
     let dialect = get_database_dialect(db);
     let parse = Parser::parse_sql(dialect.as_ref(), sql);
-    if parse.is_err() {
-        panic!("Invalid generated query: {sql}. Please report")
+    match parse {
+        Err(e) => panic!("Invalid generated query: {sql}. Error: {e}. Please report"),
+        Ok(x) if x.is_empty() => panic!("Empty statement"),
+        Ok(x) if x.len() > 1 => panic!("Found multiple statements which is not allowed. Generated query: {sql}. Please report"),
+        _ => {}
     }
+
 }
 
 pub fn has_duplicates(vec: &Vec<Field>) -> bool {
