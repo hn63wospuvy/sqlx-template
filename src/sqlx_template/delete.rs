@@ -94,9 +94,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         _ => {}
                     }
                 }
-                if by_fields.is_empty() {
-                    panic!("'by' fields must not be empty");
-                }
+
                 by_fields.sort_by_key(|x| x.ident.clone());
                 let fn_name = if let Some(fn_name) = fn_name_attr {
                     Ident::new(
@@ -213,13 +211,21 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     }
                     
                 }
+                if by_fields.is_empty() && where_condition.is_empty() {
+                    panic!("`by` fields or `where` attribute must not empty");
+                }
                 let mut where_condition =  where_condition.join(" AND ");
                 let sql = format!("DELETE FROM {} WHERE {}", &table_name, where_condition);
                 super::check_valid_sql(&sql, db);
                 let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                 let database = super::get_database_type(db);
+                let args_signature = if fn_args.is_empty() {
+                    quote! {}
+                } else {
+                    quote! {#(#fn_args),* ,}
+                };
                 let generated = quote! {
-                    pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> Result<u64, sqlx::Error> {
+                    pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature conn: E) -> Result<u64, sqlx::Error> {
                         let sql = #sql;
                         #dbg_before
                         let query = sqlx::query(sql)

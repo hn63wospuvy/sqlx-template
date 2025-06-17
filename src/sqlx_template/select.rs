@@ -746,10 +746,15 @@ fn build_query(
                 )
             };
             super::check_valid_sql(&sql, db);
+            let args_signature = if fn_args.is_empty() {
+                quote! {}
+            } else {
+                quote! {#(#fn_args),* ,}
+            };
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
                             let query_result = sqlx::query_as::<_, #struct_name>(sql)
@@ -763,7 +768,7 @@ fn build_query(
                 }
                 SelectType::One => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> Result<Option<#struct_name>, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> Result<Option<#struct_name>, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
                             let query_result = sqlx::query_as::<_, #struct_name>(sql)
@@ -802,8 +807,8 @@ fn build_query(
                         .collect::<Vec<_>>();
                     let fn_args_name_clone = fn_args_name.clone();
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>(#(#fn_args),* , page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
-                            pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , paging_offset: i64, paging_limit: i32, conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>(#args_signature page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
+                            pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature paging_offset: i64, paging_limit: i32, conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
                                 let sql = #paging_sql;
                                 #dbg_before
                                 let query_result = sqlx::query_as::<_, #struct_name>(sql)
@@ -813,7 +818,7 @@ fn build_query(
                                 #dbg_after
                                 Ok(query_result?)
                             }
-                            pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> Result<i64, sqlx::Error> {
+                            pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> Result<i64, sqlx::Error> {
                                 let sql = #count_sql;
                                 #dbg_before
                                 let query_result = sqlx::query_scalar(sql)
@@ -843,7 +848,7 @@ fn build_query(
                 }
                 SelectType::Stream => {
                     quote! {
-                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> futures::stream::BoxStream<'c, Result<#struct_name, sqlx::Error>> {
+                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> futures::stream::BoxStream<'c, Result<#struct_name, sqlx::Error>> {
                             let sql = #sql;
                             #dbg_before
                             let query_result = sqlx::query_as(sql)
@@ -856,7 +861,7 @@ fn build_query(
                 }
                 SelectType::Count => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#(#fn_args),* , conn: E) -> Result<i64, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> Result<i64, sqlx::Error> {
                             let sql = #count_sql;
                             #dbg_before
                             let count = sqlx::query_scalar(sql)
