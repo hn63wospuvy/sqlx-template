@@ -934,9 +934,7 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
             for x in &x.within_group {
                 extract_columns_and_compound_ids(&x.expr, res)?;
             }
-            for ref name in &x.name.0 {
-                res.add_columns(name)?;
-            }
+            
             match &x.args {
                 FunctionArguments::None => {},
                 FunctionArguments::Subquery(_) => return Err("Subquery is not supported".into()),
