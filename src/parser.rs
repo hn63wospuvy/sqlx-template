@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use sqlformat::{FormatOptions, Indent};
-use sqlparser::{ast::{Delete, Distinct, Expr, Fetch, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, GroupByExpr, Ident, Insert, Join, JoinConstraint, JsonTableColumnErrorHandling, NamedWindowExpr, Offset, OffsetRows, Query, ReplaceSelectItem, Select, SelectItem, SetExpr, Statement, TableFactor, TableVersion, Top, TopQuantity, Value, WildcardAdditionalOptions, WindowFrame, WindowFrameBound, WindowSpec}, dialect::{Dialect, GenericDialect, PostgreSqlDialect}, parser::Parser};
+use sqlparser::{ast::{Delete, Distinct, Expr, Fetch, Function, FunctionArg, FunctionArgExpr, FunctionArgumentClause, FunctionArguments, GroupByExpr, HavingBound, Ident, Insert, Join, JoinConstraint, JsonTableColumnErrorHandling, NamedWindowExpr, Offset, OffsetRows, Query, ReplaceSelectItem, Select, SelectItem, SetExpr, Statement, TableFactor, TableVersion, Top, TopQuantity, Value, WildcardAdditionalOptions, WindowFrame, WindowFrameBound, WindowSpec}, dialect::{Dialect, GenericDialect, PostgreSqlDialect}, parser::Parser};
 use std::collections::{HashMap, HashSet};
 
 
@@ -927,7 +927,43 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
         Expr::IntroducedString { introducer, value } => res.add_value(value),
         Expr::TypedString { data_type, value } => return Ok(()),
         Expr::MapAccess { column, keys } => extract_columns_and_compound_ids(&**column, res),
-        Expr::Function(x) => return Err("Function is not supported".into()),
+        Expr::Function(x) => {
+            if let Some(ref filter) = x.filter {
+                extract_columns_and_compound_ids(&**filter, res)?;
+            }
+            for x in &x.within_group {
+                extract_columns_and_compound_ids(&x.expr, res)?;
+            }
+            for ref name in &x.name.0 {
+                res.add_columns(name)?;
+            }
+            match &x.args {
+                FunctionArguments::None => {},
+                FunctionArguments::Subquery(_) => return Err("Subquery is not supported".into()),
+                FunctionArguments::List(arg_list) => {
+                    for arg in &arg_list.args {
+                        match arg {
+                            FunctionArg::Named { arg: FunctionArgExpr::Expr(expr), .. } => extract_columns_and_compound_ids(expr, res)?,
+                            FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => extract_columns_and_compound_ids(expr, res)?,
+                            _ => {}
+                        }
+                    }
+                    for clause in &arg_list.clauses {
+                        match clause {
+                            FunctionArgumentClause::OrderBy(exprs) => {
+                                for expr in exprs {
+                                    extract_columns_and_compound_ids(&expr.expr, res)?;
+                                }
+                            },
+                            FunctionArgumentClause::Limit(expr) => extract_columns_and_compound_ids(expr, res)?,
+                            FunctionArgumentClause::Having(having_bound) => extract_columns_and_compound_ids(&having_bound.1, res)?,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Ok(())
+        },
         Expr::Case { operand, conditions, results, else_result } => {
             for l2 in conditions {
                 extract_columns_and_compound_ids(l2, res)?;
