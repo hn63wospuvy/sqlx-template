@@ -503,14 +503,23 @@ pub fn derive_update(
                         .map(|field| {
                             let arg_name = field.ident.as_ref().unwrap();
                             let arg_type = &field.ty;
-                            quote! { #arg_name: &'c #arg_type }
+                            if &arg_type.to_token_stream().to_string() == "String" {
+                                quote! { #arg_name: &'c str }
+                            } else {
+                                quote! { #arg_name: &'c #arg_type }
+                            }
+                            
                         })
                         .collect::<Vec<_>>();
 
                     on_fields.iter().for_each(|field| {
                         let arg_name = field.ident.as_ref().unwrap();
                         let arg_type = &field.ty;
-                        let arg = quote! { #arg_name: &'c #arg_type };
+                        let arg = if &arg_type.to_token_stream().to_string() == "String" {
+                            quote! { #arg_name: &'c str }
+                        } else {
+                            quote! { #arg_name: &'c #arg_type }
+                        };
                         fn_args.push(arg);
                     });
 
@@ -518,7 +527,11 @@ pub fn derive_update(
                         let version_field = version_fields.get(0).unwrap();
                         let arg_name = version_field.ident.as_ref().unwrap();
                         let arg_type = &version_field.ty;
-                        let ts = quote! { #arg_name: &'c #arg_type };
+                        let ts = if &arg_type.to_token_stream().to_string() == "String" {
+                            quote! { #arg_name: &'c str }
+                        } else {
+                            quote! { #arg_name: &'c #arg_type }
+                        };
                         fn_args.push(ts);
                     }
 
