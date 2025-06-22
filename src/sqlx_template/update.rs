@@ -56,7 +56,7 @@ pub fn derive_update(
                 let mut on_fields = Vec::new();
                 let mut version_fields = Vec::new();
                 let mut fn_name_attr = None;
-                let mut return_entity = false;
+                let mut return_entity = None;
                 let mut debug_slow = debug_slow.clone();
                 let mut where_stmt_str = None;
                 for meta in nested {
@@ -119,10 +119,26 @@ pub fn derive_update(
                                     fn_name_attr.replace(lit);
                                 }
                             } else if nv.path.is_ident("returning") {
-                                if let Lit::Bool(lit) = &nv.lit {
+                                if let Lit::Str(lit) = &nv.lit {
                                     let lit = lit.value();
-                                    return_entity = lit;
-                                }
+                                    let fields_str =
+                                        lit.split(',').map(|x| x.trim()).collect::<Vec<_>>();
+                                    let return_fields = super::check_fields(&fields_str, all_fields.clone());
+                                    if super::has_duplicates(&return_fields) {
+                                        panic!("Found duplicated fields: {:?}", fields_str);
+                                    }
+                                    if return_fields.len() != fields_str.len() {
+                                        panic!(
+                                            "One of those value is duplicated or not a field in struct: {:?}",
+                                            fields_str
+                                        );
+                                    }
+                                    return_entity.replace(return_fields);
+                                } else if let Lit::Bool(lit) = &nv.lit {
+                                    if lit.value() {
+                                        return_entity.replace(vec![]);
+                                    }
+                                } 
                             } else if nv.path.is_ident("where") {
                                 if let Lit::Str(lit) = &nv.lit {
                                     let lit = lit.value();
@@ -175,9 +191,7 @@ pub fn derive_update(
                         intersection
                     );
                 }
-                if by_fields.is_empty() {
-                    panic!("'by' fields must not be empty");
-                }
+
                 by_fields.sort_by_key(|x| x.ident.clone());
                 on_fields.sort_by_key(|x| x.ident.clone());
 
@@ -206,15 +220,17 @@ pub fn derive_update(
                     let fn_name = Ident::new(&fn_name, proc_macro2::Span::call_site());
                     let fn_name_return =
                         Ident::new(&fn_name_return, proc_macro2::Span::call_site());
+                    let fn_name_return_stream =
+                        Ident::new(&format!("{fn_name_return}_stream"), proc_macro2::Span::call_site());
                     let mut fn_args = by_fields
                         .iter()
                         .map(|field| {
                             let arg_name = field.ident.as_ref().unwrap();
                             let arg_type = &field.ty;
                             if &arg_type.to_token_stream().to_string() == "String" {
-                                quote! { #arg_name: &str }
+                                quote! { #arg_name: &'c str }
                             } else {
-                                quote! { #arg_name: &#arg_type }
+                                quote! { #arg_name: &'c #arg_type }
                             }
                         })
                         .collect::<Vec<_>>();
@@ -275,7 +291,7 @@ pub fn derive_update(
                     let where_binds = by_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
-                            .bind(&#field_name)
+                            .bind(#field_name)
                         }
                     });
 
@@ -329,7 +345,7 @@ pub fn derive_update(
                                         if by_fields_map.contains_key(p) {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
                                                 None,
                                             )
@@ -338,16 +354,16 @@ pub fn derive_update(
                                         {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
-                                                Some(quote! { #arg_name: &str }),
+                                                Some(quote! { #arg_name: &'c str }),
                                             )
                                         } else {
                                             (
                                                 quote! {
-                                                    .bind(&#arg_name)
+                                                    .bind(#arg_name)
                                                 },
-                                                Some(quote! { #arg_name: &#arg_type }),
+                                                Some(quote! { #arg_name: &'c #arg_type }),
                                             )
                                         }
                                     })
@@ -359,7 +375,7 @@ pub fn derive_update(
                                 args_vec.into_iter().filter_map(|x| x).collect::<Vec<_>>();
                             fn_args.append(&mut args_vec);
                             binds.append(&mut bind_vec);
-                            let start_counter = by_fields.len() + 1;
+                            let start_counter = by_fields.len() + set_fields.len() + 1;
                             let (sql, params) = parser::replace_placeholder(
                                 &where_stmt_str,
                                 par_res.placeholder_vars,
@@ -370,34 +386,71 @@ pub fn derive_update(
                             where_stmt.push(where_stmt_str);
                         }
                     }
+
+                    if by_fields.is_empty() && where_stmt.is_empty() {
+                        panic!("`by` fields or `where` attribute must not empty");
+                    }
+
                     let where_stmt = where_stmt.join(" AND ");
 
                     let sql = format!(
                         "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
                     );
-                    let sql_return = format!(
-                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING *",
-                    );
-
-                    let binds_return = binds.clone();
+                    
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                     let database = super::get_database_type(db);
-                    let generated = if return_entity && matches!(db, Database::Postgres) {
+                    let args_signature = if fn_args.is_empty() {
+                        quote! {}
+                    } else {
+                        quote! {#(#fn_args),* ,}
+                    };
+                    let generated = if return_entity.is_some() && matches!(db, Database::Postgres) {
+                        let binds_return = binds.clone();
+                        let return_entity = return_entity.unwrap();
+                        let (return_type, return_columns, query_func) = match return_entity.len() {
+                            0 => (quote! {#struct_name}, "*".into(), quote! {query_as}),
+                            1 => {
+                                let field_type = return_entity[0].clone().ty;
+                                (quote! {#field_type}, get_field_name_as_column(&return_entity[0], db), quote! {query_scalar})
+                            }
+                            _ => {
+                                let field_types = return_entity.iter().map(|field| &field.ty);
+                                let field_columns = return_entity.iter().map(|field| get_field_name_as_column(field, db)).collect::<Vec<_>>();
+                                (quote! {(#(#field_types),*)}, field_columns.join(", "), quote! {query_as})
+                            }
+                        };
+                        let sql_return = format!(
+                            "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING {return_columns}",
+                        );
+                        super::check_valid_single_sql(&sql_return, db);
                         quote! {
-                            pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , re: &#struct_name, conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
+                            pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature re: &'c #struct_name, conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
                                 let sql = #sql_return;
                                 #dbg_before
-                                let res = sqlx::query_as::<_, #struct_name>(sql)
+                                let query_result = sqlx::#query_func::<_, #return_type>(sql)
                                     #(#binds_return)*
-                                    .fetch_one(conn)
+                                    .fetch_all(conn)
                                     .await;
                                 #dbg_after
-                                Ok(res?)
+                                Ok(query_result?)
                             }
+                            pub async fn #fn_name_return_stream<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature re: &'c #struct_name, conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#return_type, sqlx::Error>> {
+                                let sql = #sql_return;
+                                #dbg_before
+                                let query_result = sqlx::#query_func::<_, #return_type>(sql)
+                                    #(#binds_return)*
+                                    .fetch(conn)
+                                    ;
+                                #dbg_after
+                                query_result
+                            }
+
+                           
                         }
+
                     } else {
                         quote! {
-                            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , re: &#struct_name, conn: E) -> core::result::Result<u64, sqlx::Error> {
+                            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature re: &#struct_name, conn: E) -> core::result::Result<u64, sqlx::Error> {
                                 let sql = #sql;
                                 #dbg_before
                                 let query = sqlx::query(sql)
@@ -443,19 +496,21 @@ pub fn derive_update(
                     let fn_name = Ident::new(&fn_name, proc_macro2::Span::call_site());
                     let fn_name_return =
                         Ident::new(&fn_name_return, proc_macro2::Span::call_site());
+                    let fn_name_return_stream =
+                        Ident::new(&format!("{fn_name_return}_stream"), proc_macro2::Span::call_site());
                     let mut fn_args = by_fields
                         .iter()
                         .map(|field| {
                             let arg_name = field.ident.as_ref().unwrap();
                             let arg_type = &field.ty;
-                            quote! { #arg_name: & #arg_type }
+                            quote! { #arg_name: &'c #arg_type }
                         })
                         .collect::<Vec<_>>();
 
                     on_fields.iter().for_each(|field| {
                         let arg_name = field.ident.as_ref().unwrap();
                         let arg_type = &field.ty;
-                        let arg = quote! { #arg_name: & #arg_type };
+                        let arg = quote! { #arg_name: &'c #arg_type };
                         fn_args.push(arg);
                     });
 
@@ -463,7 +518,7 @@ pub fn derive_update(
                         let version_field = version_fields.get(0).unwrap();
                         let arg_name = version_field.ident.as_ref().unwrap();
                         let arg_type = &version_field.ty;
-                        let ts = quote! { #arg_name: & #arg_type };
+                        let ts = quote! { #arg_name: &'c #arg_type };
                         fn_args.push(ts);
                     }
 
@@ -503,33 +558,27 @@ pub fn derive_update(
                         let stmt = format!("{arg_name} = ${}", by_fields.len() + current_idx + 1);
                         where_stmt.push(stmt);
                     }
-                    let where_stmt = where_stmt.join(" AND ");
+                    
 
-                    let sql = format!(
-                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
-                    );
-                    super::check_valid_sql(&sql, db);
-                    let sql_return = format!(
-                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING *",
-                    );
+
                     
                     let set_binds = on_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
-                            .bind(&#field_name)
+                            .bind(#field_name)
                         }
                     });
 
                     let where_binds = by_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
-                            .bind(&#field_name)
+                            .bind(#field_name)
                         }
                     });
                     let version_binds = version_fields.iter().map(|field| {
                         let field_name = field.ident.clone().unwrap();
                         quote! {
-                            .bind(&#field_name)
+                            .bind(#field_name)
                         }
                     });
 
@@ -537,27 +586,151 @@ pub fn derive_update(
                     binds.append(&mut where_binds.collect::<Vec<_>>());
                     binds.append(&mut version_binds.collect::<Vec<_>>());
 
-                    let binds_return = binds.clone();
+                    if let Some(where_stmt_str) = where_stmt_str {
+                        let par_res = parser::get_columns_and_compound_ids(
+                            &where_stmt_str,
+                            super::get_database_dialect(db),
+                        )
+                        .unwrap();
+                        for col in &par_res.columns {
+                            if !all_columns_name.contains(&col) {
+                                panic!("Invalid where statement: {col} column is not found in field list");
+                            }
+                        }
+                        for table in &par_res.tables {
+                            if table != &table_name {
+                                panic!("Invalid where statement: {table} is not allowed. Only {table_name} are permitted.");
+                            }
+                        }
+                        if !par_res.placeholder_vars.is_empty() {
+                            let all_fields_map = all_fields
+                                .iter()
+                                .map(|x| (get_field_name(x), x.clone()))
+                                .collect::<HashMap<_, _>>();
+                            let by_fields_map = by_fields
+                                .iter()
+                                .map(|x| (get_field_name(x), x.clone()))
+                                .collect::<HashMap<_, _>>();
+                            let mut extend_fields = par_res
+                                .placeholder_vars
+                                .iter()
+                                .filter_map(|p| {
+                                    let p = &p[1..];
+                                    if !all_fields_map.contains_key(p) {
+                                        panic!("Field {p} is not found in list columns name");
+                                    }
+
+                                    all_fields_map.get(p).map(|field| {
+                                        let arg_name = field.ident.as_ref().unwrap();
+                                        let arg_type = &field.ty;
+                                        if by_fields_map.contains_key(p) {
+                                            (
+                                                quote! {
+                                                    .bind(#arg_name)
+                                                },
+                                                None,
+                                            )
+                                        } else if &arg_type.to_token_stream().to_string()
+                                            == "String"
+                                        {
+                                            (
+                                                quote! {
+                                                    .bind(#arg_name)
+                                                },
+                                                Some(quote! { #arg_name: &'c str }),
+                                            )
+                                        } else {
+                                            (
+                                                quote! {
+                                                    .bind(#arg_name)
+                                                },
+                                                Some(quote! { #arg_name: &'c #arg_type }),
+                                            )
+                                        }
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            let (mut bind_vec, mut args_vec) =
+                                extend_fields.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
+                            let mut args_vec =
+                                args_vec.into_iter().filter_map(|x| x).collect::<Vec<_>>();
+                            fn_args.append(&mut args_vec);
+                            binds.append(&mut bind_vec);
+                            let start_counter = by_fields.len() + on_fields.len() + 1;
+                            let (sql, params) = parser::replace_placeholder(
+                                &where_stmt_str,
+                                par_res.placeholder_vars,
+                                Some(start_counter as i32),
+                            );
+                            where_stmt.push(sql);
+                        } else {
+                            where_stmt.push(where_stmt_str);
+                        }
+                    }
+                    if by_fields.is_empty() && where_stmt.is_empty() {
+                        panic!("`by` fields or `where` attribute must not empty");
+                    }
+                    let where_stmt = where_stmt.join(" AND ");
+                    let sql = format!(
+                        "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt}",
+                    );
+                    super::check_valid_single_sql(&sql, db);
 
                     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                     let database = super::get_database_type(db);
-                    let generated = if return_entity && matches!(db, Database::Postgres) {
-                        super::check_valid_sql(&sql_return, db);
+                    let args_signature = if fn_args.is_empty() {
+                        quote! {}
+                    } else {
+                        quote! {#(#fn_args),* ,}
+                    };
+                    let generated = if return_entity.is_some() && matches!(db, Database::Postgres) {
+
+                        let binds_return = binds.clone();
+                        let return_entity = return_entity.unwrap();
+                        let (return_type, return_columns, query_func) = match return_entity.len() {
+                            0 => (quote! {#struct_name}, "*".into(), quote! {query_as}),
+                            1 => {
+                                let field_type = return_entity[0].clone().ty;
+                                (quote! {#field_type}, get_field_name_as_column(&return_entity[0], db), quote! {query_scalar})
+                            }
+                            _ => {
+                                let field_types = return_entity.iter().map(|field| &field.ty);
+                                let field_columns = return_entity.iter().map(|field| get_field_name_as_column(field, db)).collect::<Vec<_>>();
+                                (quote! {(#(#field_types),*)}, field_columns.join(", "), quote! {query_as})
+                            }
+                        };
+                        let sql_return = format!(
+                            "UPDATE {table_name} SET {set_stmt} WHERE {where_stmt} RETURNING {return_columns}",
+                        );
+                        super::check_valid_single_sql(&sql_return, db);
                         quote! {
-                            pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
+                            pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
                                 let sql = #sql_return;
                                 #dbg_before
-                                let res = sqlx::query_as::<_, #struct_name>(sql)
+                                let query_result = sqlx::#query_func::<_, #return_type>(sql)
                                     #(#binds_return)*
-                                    .fetch_one(conn)
+                                    .fetch_all(conn)
                                     .await;
                                 #dbg_after
-                                Ok(res?)
+                                Ok(query_result?)
                             }
+                            pub async fn #fn_name_return_stream<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#return_type, sqlx::Error>> {
+                                let sql = #sql_return;
+                                #dbg_before
+                                let query_result = sqlx::#query_func::<_, #return_type>(sql)
+                                    #(#binds_return)*
+                                    .fetch(conn)
+                                    ;
+                                #dbg_after
+                                query_result
+                            }
+
+                           
                         }
+
                     } else {
                         quote! {
-                            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#(#fn_args),* , conn: E) -> core::result::Result<u64, sqlx::Error> {
+                            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature conn: E) -> core::result::Result<u64, sqlx::Error> {
                                 let sql = #sql;
                                 #dbg_before
                                 let query = sqlx::query(sql)

@@ -50,7 +50,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
     let sql = format!(
         "INSERT INTO {table_name}({sql_fields}) VALUES ({sql_placeholders})"
     );
-    super::check_valid_sql(&sql, db);
+    super::check_valid_single_sql(&sql, db);
     let sql_return = format!(
         "INSERT INTO {table_name}({sql_fields}) VALUES ({sql_placeholders}) RETURNING *"
     );
@@ -81,7 +81,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
 
     
     let insert_returning = if matches!(db, Database::Postgres) {
-        super::check_valid_sql(&sql_return, db);
+        super::check_valid_single_sql(&sql_return, db);
         let insert_returning = quote! {
             pub async fn insert_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> Result<#struct_name, sqlx::Error> {
                 let sql = #sql_return;

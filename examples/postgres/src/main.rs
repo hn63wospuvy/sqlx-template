@@ -94,6 +94,8 @@ async fn main() {
         .into_page(page_request);
     println!("Page user: {page:#?}");
 
+    let user = User::find_one_by_group(&None, &db).await.unwrap();
+
 
     // Transaction
     let mut tx = db.begin().await.unwrap();
@@ -112,8 +114,19 @@ async fn main() {
     user.updated_by = Some("abc".into());
     User::update_user(&user.id, &user, &mut *tx).await.unwrap();
 
+
     User::upsert_by_email(&user,  &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning(&user.id, &user, &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning_id(&user.id, &user, &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning_id_email(&user.id, &user, &mut *tx).await.unwrap();
+
     tx.commit().await.unwrap();
+
+    
+    let mut user_updated_stream = User::update_user_returning_stream(&user.id, &user, &db).await;
+    while let Some(Ok(o)) = user_updated_stream.next().await {
+        println!("Updated user: {o:#?}");
+    }
 
     let user = User::find_one_by_email(&"user2@abc.com".to_string(), &db).await.unwrap().unwrap();
     println!("User after update: {user:#?}");
@@ -180,9 +193,13 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_select_all(by = "id, email", order = "id desc")]
 #[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
 #[tp_select_one(by = "email")]
+#[tp_select_one(by = "group")]
 #[tp_select_page(by = "org", order = "id desc, org desc")]
 #[tp_select_count(by = "id, email")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning", returning = true)]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id", returning = "id")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id_email", returning = "id, email")]
 #[tp_select_stream(order = "id desc")]
 pub struct User {
     #[auto]
