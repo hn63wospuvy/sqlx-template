@@ -3,6 +3,15 @@ use sqlx::FromRow;
 use sqlx::types::chrono::DateTime;
 use sqlx::types::chrono::Utc;
 
+// Define Page type for testing
+#[derive(Debug, Clone)]
+pub struct Page<T> {
+    pub offset: u64,
+    pub limit: u32,
+    pub total: Option<u64>,
+    pub data: Vec<T>
+}
+
 #[derive(PostgresTemplate, FromRow, Default, Clone, Debug)]
 #[table("chats")]
 // #[tp_select_one(where = "active = true")]
@@ -30,3 +39,28 @@ impl Chat {
         // Chat::update_by_id_on_content_return(id, content, sender, conn)
     }
 }
+
+// Test function for Page query with JOIN and GROUP BY
+// This should use the new subquery approach for count
+#[postgres_query(sql = "
+    SELECT u.department, COUNT(c.id) as chat_count
+    FROM users u
+    LEFT JOIN chats c ON u.id = c.sender
+    WHERE u.active = :active
+    GROUP BY u.department
+    ORDER BY chat_count DESC
+")]
+pub async fn get_department_chat_stats(active: bool) -> Page<DepartmentChatStats> {}
+
+#[derive(FromRow, Debug)]
+pub struct DepartmentChatStats {
+    pub department: String,
+    pub chat_count: i64,
+}
+
+// Test function for simple Page query (should use old method)
+#[postgres_query(sql = "SELECT * FROM chats WHERE active = :active ORDER BY created_at DESC")]
+pub async fn get_active_chats(active: bool) -> Page<Chat> {}
+
+// Include test module
+pub mod test_count_query;

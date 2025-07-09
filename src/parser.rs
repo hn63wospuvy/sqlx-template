@@ -79,11 +79,27 @@ pub fn convert_to_count_query(sql: &str, dialect: &dyn Dialect) -> Result<String
     match &mut ast[0] {
         Statement::Query(query) => {
             if let SetExpr::Select(select) = query.body.as_mut() {
-                let Select { projection, .. } = &mut **select;
-                projection.clear();
-                projection.push(COUNT_STMT.clone());
-                query.order_by.clear();
-                Ok(ast[0].to_string())
+                // Check if query has GROUP BY or JOIN - if so, wrap in subquery
+                let has_group_by = !matches!(select.group_by, GroupByExpr::Expressions(ref exprs) if exprs.is_empty());
+                let has_join = select.from.iter().any(|from| !from.joins.is_empty());
+
+                if has_group_by || has_join {
+                    // For queries with GROUP BY or JOIN, wrap the original query in a subquery
+                    // Remove LIMIT and OFFSET from original query for count
+                    query.limit = None;
+                    query.offset = None;
+                    query.order_by.clear();
+
+                    let original_query = ast[0].to_string();
+                    return Ok(format!("SELECT COUNT(*) FROM ({}) AS count_subquery", original_query));
+                } else {
+                    // For simple queries without GROUP BY or JOIN, use the original approach
+                    let Select { projection, .. } = &mut **select;
+                    projection.clear();
+                    projection.push(COUNT_STMT.clone());
+                    query.order_by.clear();
+                    Ok(ast[0].to_string())
+                }
             } else {
                 Err("Unsupported query type".into())
             }
@@ -1144,11 +1160,61 @@ fn test_expr() {
 
 #[test]
 fn test_count_query() {
+    // Test simple query without JOIN or GROUP BY
     let sql = "
         select t.cali, t.baque, t.xola from t1 t where t.user = :user and t.age = :a1 and timestamp(t.full -> :a1 ) like '%:name%'
         ";
-        let dialect = PostgreSqlDialect {}; 
+    let dialect = PostgreSqlDialect {};
     let count_query = convert_to_count_query(sql, &PostgreSqlDialect {});
-    dbg!(count_query);
-    
+    dbg!(&count_query);
+    assert!(count_query.is_ok());
+    let count_sql = count_query.unwrap();
+    assert!(count_sql.contains("COUNT(1)"));
+    assert!(!count_sql.contains("SELECT COUNT(*) FROM ("));
+
+    // Test query with JOIN - should wrap in subquery
+    let sql_with_join = "
+        select t1.name, t2.value
+        from table1 t1
+        join table2 t2 on t1.id = t2.table1_id
+        where t1.status = :status
+        ";
+    let count_query_join = convert_to_count_query(sql_with_join, &PostgreSqlDialect {});
+    dbg!(&count_query_join);
+    assert!(count_query_join.is_ok());
+    let count_sql_join = count_query_join.unwrap();
+    assert!(count_sql_join.contains("SELECT COUNT(*) FROM ("));
+    assert!(count_sql_join.contains(") AS count_subquery"));
+
+    // Test query with GROUP BY - should wrap in subquery
+    let sql_with_group_by = "
+        select department, count(*) as emp_count
+        from employees
+        where salary > :min_salary
+        group by department
+        ";
+    let count_query_group = convert_to_count_query(sql_with_group_by, &PostgreSqlDialect {});
+    dbg!(&count_query_group);
+    assert!(count_query_group.is_ok());
+    let count_sql_group = count_query_group.unwrap();
+    assert!(count_sql_group.contains("SELECT COUNT(*) FROM ("));
+    assert!(count_sql_group.contains(") AS count_subquery"));
+
+    // Test query with both JOIN and GROUP BY - should wrap in subquery
+    let sql_with_join_and_group = "
+        select t1.department, count(t2.id) as order_count
+        from employees t1
+        left join orders t2 on t1.id = t2.employee_id
+        where t1.active = :active
+        group by t1.department
+        order by order_count desc
+        ";
+    let count_query_complex = convert_to_count_query(sql_with_join_and_group, &PostgreSqlDialect {});
+    dbg!(&count_query_complex);
+    assert!(count_query_complex.is_ok());
+    let count_sql_complex = count_query_complex.unwrap();
+    assert!(count_sql_complex.contains("SELECT COUNT(*) FROM ("));
+    assert!(count_sql_complex.contains(") AS count_subquery"));
+    // Should not contain ORDER BY in the final count query
+    assert!(!count_sql_complex.ends_with("ORDER BY order_count DESC"));
 }
