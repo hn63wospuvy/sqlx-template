@@ -17,8 +17,9 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
     };
     let table_name = get_table_name(&ast);
     let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
-    if !matches!(db, Database::Postgres) {
-        panic!("`tp_upsert` only support for Postgres")
+    // Upsert is supported for Postgres, SQLite, and MySQL
+    if !matches!(db, Database::Postgres | Database::Sqlite | Database::Mysql) {
+        panic!("`tp_upsert` is supported for Postgres, SQLite, and MySQL only")
     }
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
 
@@ -269,49 +270,150 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     .collect::<Vec<_>>()
                     ;
                 
-                let do_update_stmt = if do_nothing {
-                    format!("DO NOTHING")
-                } else if on_fields.is_empty() {
-                    let mut set_stmt = insert_fields
-                        .iter()
-                        .filter(|x| !not_excluded_fields.contains(&x.to_string()))
-                        .map(|x| {
-                            let column = check_column_name(x.to_string(), db);
-                            format!(" {column} = EXCLUDED.{x}")
-                        })
-                        .collect::<Vec<_>>()
-                        ;
-                    if !version_fields.is_empty() {
-                        let version_set_stmt = version_fields.iter().map(|x| {
-                            let x = get_field_name_as_column(x, db);
-                            format!(" {x} = {table_name}.{x} + 1")
-                        });
-                        set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
-                    }
-                    let set_stmt = set_stmt.join(", ");
-                    format!(" DO UPDATE SET {set_stmt}")
-                } else {
-                    let mut set_stmt = on_fields
-                        .iter()
-                        .filter(|x| {
-                            let name = x.ident.clone().unwrap();
-                            !not_excluded_fields.contains(&name.to_string())
-                        })
-                        .map(|x| {
-                            let x = get_field_name_as_column(x, db);
-                            format!(" {x} = EXCLUDED.{x}")
-                        })
-                        .collect::<Vec<_>>()
-                        ;
-                    if !version_fields.is_empty() {
-                        let version_set_stmt = version_fields.iter().map(|x| {
-                            let x = get_field_name_as_column(x, db);
-                            format!(" {x} = {table_name}.{x} + 1")
-                        });
-                        set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
-                    }
-                    let set_stmt = set_stmt.join(", ");
-                    format!(" DO UPDATE SET {set_stmt}")
+                let do_update_stmt = match db {
+                    Database::Postgres => {
+                        if do_nothing {
+                            format!("DO NOTHING")
+                        } else if on_fields.is_empty() {
+                            let mut set_stmt = insert_fields
+                                .iter()
+                                .filter(|x| !not_excluded_fields.contains(&x.to_string()))
+                                .map(|x| {
+                                    let column = check_column_name(x.to_string(), db);
+                                    format!(" {column} = EXCLUDED.{x}")
+                                })
+                                .collect::<Vec<_>>()
+                                ;
+                            if !version_fields.is_empty() {
+                                let version_set_stmt = version_fields.iter().map(|x| {
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = {table_name}.{x} + 1")
+                                });
+                                set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
+                            }
+                            let set_stmt = set_stmt.join(", ");
+                            format!(" DO UPDATE SET {set_stmt}")
+                        } else {
+                            let mut set_stmt = on_fields
+                                .iter()
+                                .filter(|x| {
+                                    let name = x.ident.clone().unwrap();
+                                    !not_excluded_fields.contains(&name.to_string())
+                                })
+                                .map(|x| {
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = EXCLUDED.{x}")
+                                })
+                                .collect::<Vec<_>>()
+                                ;
+                            if !version_fields.is_empty() {
+                                let version_set_stmt = version_fields.iter().map(|x| {
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = {table_name}.{x} + 1")
+                                });
+                                set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
+                            }
+                            let set_stmt = set_stmt.join(", ");
+                            format!(" DO UPDATE SET {set_stmt}")
+                        }
+                    },
+                    Database::Sqlite => {
+                        if do_nothing {
+                            format!("DO NOTHING")
+                        } else if on_fields.is_empty() {
+                            let mut set_stmt = insert_fields
+                                .iter()
+                                .filter(|x| !not_excluded_fields.contains(&x.to_string()))
+                                .map(|x| {
+                                    let column = check_column_name(x.to_string(), db);
+                                    format!(" {column} = excluded.{x}")
+                                })
+                                .collect::<Vec<_>>()
+                                ;
+                            if !version_fields.is_empty() {
+                                let version_set_stmt = version_fields.iter().map(|x| {
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = {table_name}.{x} + 1")
+                                });
+                                set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
+                            }
+                            let set_stmt = set_stmt.join(", ");
+                            format!(" DO UPDATE SET {set_stmt}")
+                        } else {
+                            let mut set_stmt = on_fields
+                                .iter()
+                                .filter(|x| {
+                                    let name = x.ident.clone().unwrap();
+                                    !not_excluded_fields.contains(&name.to_string())
+                                })
+                                .map(|x| {
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = excluded.{x}")
+                                })
+                                .collect::<Vec<_>>()
+                                ;
+                            if !version_fields.is_empty() {
+                                let version_set_stmt = version_fields.iter().map(|x| {
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = {table_name}.{x} + 1")
+                                });
+                                set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
+                            }
+                            let set_stmt = set_stmt.join(", ");
+                            format!(" DO UPDATE SET {set_stmt}")
+                        }
+                    },
+                    Database::Mysql => {
+                        if do_nothing {
+                            // MySQL doesn't have DO NOTHING, we'll use a dummy update
+                            let first_field = insert_fields.first().unwrap();
+                            let column = check_column_name(first_field.to_string(), db);
+                            format!(" {column} = {column}")
+                        } else if on_fields.is_empty() {
+                            let mut set_stmt = insert_fields
+                                .iter()
+                                .filter(|x| !not_excluded_fields.contains(&x.to_string()))
+                                .map(|x| {
+                                    let column = check_column_name(x.to_string(), db);
+                                    format!(" {column} = VALUES({x})")
+                                })
+                                .collect::<Vec<_>>()
+                                ;
+                            if !version_fields.is_empty() {
+                                let version_set_stmt = version_fields.iter().map(|x| {
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = {x} + 1")
+                                });
+                                set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
+                            }
+                            let set_stmt = set_stmt.join(", ");
+                            set_stmt
+                        } else {
+                            let mut set_stmt = on_fields
+                                .iter()
+                                .filter(|x| {
+                                    let name = x.ident.clone().unwrap();
+                                    !not_excluded_fields.contains(&name.to_string())
+                                })
+                                .map(|x| {
+                                    let field_name = get_field_name(x);
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = VALUES({field_name})")
+                                })
+                                .collect::<Vec<_>>()
+                                ;
+                            if !version_fields.is_empty() {
+                                let version_set_stmt = version_fields.iter().map(|x| {
+                                    let x = get_field_name_as_column(x, db);
+                                    format!(" {x} = {x} + 1")
+                                });
+                                set_stmt = set_stmt.into_iter().chain(version_set_stmt).collect();
+                            }
+                            let set_stmt = set_stmt.join(", ");
+                            set_stmt
+                        }
+                    },
+                    _ => panic!("Unsupported database for upsert")
                 };
                 let mut set_stmt = set_fields
                     .iter()
@@ -354,9 +456,19 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     _ => String::new()
                 };
 
-                let sql = format!(
-                    "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt}",
-                );
+                let sql = match db {
+                    Database::Postgres | Database::Sqlite => {
+                        format!(
+                            "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt}",
+                        )
+                    },
+                    Database::Mysql => {
+                        format!(
+                            "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON DUPLICATE KEY UPDATE {do_update_stmt}",
+                        )
+                    },
+                    _ => panic!("Unsupported database for upsert")
+                };
                 super::check_valid_single_sql(&sql, db);
                 let binds = insert_fields.iter().map(|field| {
                     quote! {
@@ -369,10 +481,20 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 
                 let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
                 let database = super::get_database_type(db);
-                let generated = if return_entity && matches!(db, Database::Postgres) {
-                    let sql_return = format!(
-                        "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt} RETURNING *",
-                    );
+                let generated = if return_entity && matches!(db, Database::Postgres | Database::Sqlite) {
+                    let sql_return = match db {
+                        Database::Postgres | Database::Sqlite => {
+                            format!(
+                                "INSERT INTO {table_name} ({insert_field_stmt}) VALUES ({insert_placeholders}) ON CONFLICT ({conflict_field_stmt}) {do_update_stmt} {where_stmt} RETURNING *",
+                            )
+                        },
+                        Database::Mysql => {
+                            // MySQL doesn't support RETURNING, we'll need to do a separate SELECT
+                            // For now, we'll not support returning for MySQL
+                            panic!("RETURNING is not supported for MySQL upsert operations")
+                        },
+                        _ => panic!("Unsupported database for upsert with returning")
+                    };
                     super::check_valid_single_sql(&sql_return, db);
                     let binds_return = binds.clone();
                     quote! {

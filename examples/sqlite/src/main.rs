@@ -1,7 +1,7 @@
 
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use sqlx_template::{insert, multi_query, query, select, update, Columns, DeleteTemplate, SelectTemplate, TableName, UpdateTemplate};
+use sqlx_template::{insert, multi_query, query, select, update, Columns, DeleteTemplate, SelectTemplate, SqliteTemplate, TableName, UpdateTemplate, UpsertTemplate};
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
 use sqlx_template::InsertTemplate;
 
@@ -108,10 +108,32 @@ async fn main() {
     user.updated_at = Some(Utc::now());
     user.updated_by = Some("abc".into());
     User::update_user(&user.id, &user, &mut *tx).await.unwrap();
+
+    // Test upsert functionality
+    let upsert_user = User {
+        email: "user3@abc.com".to_string(),
+        password: "upsert_password".to_string(),
+        org: Some(org.id),
+        active: true,
+        updated_at: Some(Utc::now()),
+        ..Default::default()
+    };
+
+    // This will insert since user3@abc.com doesn't exist
+    User::upsert_by_email(&upsert_user, &mut *tx).await.unwrap();
+
+    // This will update since user3@abc.com now exists
+    let mut updated_upsert_user = upsert_user.clone();
+    updated_upsert_user.password = "updated_upsert_password".to_string();
+    User::upsert_by_email(&updated_upsert_user, &mut *tx).await.unwrap();
+
     tx.commit().await.unwrap();
 
     let user = User::find_one_by_email(&"user2@abc.com".to_string(), &db).await.unwrap().unwrap();
     println!("User after update: {user:#?}");
+
+    let upserted_user = User::find_one_by_email(&"user3@abc.com".to_string(), &db).await.unwrap().unwrap();
+    println!("Upserted user: {upserted_user:#?}");
 
 
 }
@@ -165,9 +187,9 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
     }
 }
 
-#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
+#[derive(SqliteTemplate, FromRow, Default, Clone, Debug)]
 #[debug_slow = 1000]
-#[table_name = "users"]
+#[table("users")]
 #[tp_delete(by = "id")]
 #[tp_delete(by = "id, email")]
 #[tp_select_all(by = "id, email", order = "id desc")]
@@ -177,6 +199,7 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_select_count(by = "id, email")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
 #[tp_select_stream(order = "id desc")]
+#[tp_upsert(by = "email", update = "password, updated_at")]
 pub struct User {
     #[auto]
     pub id: i32,
@@ -197,7 +220,8 @@ pub struct User {
 
 #[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
 #[debug_slow = 1000]
-#[table_name = "chats"]
+#[table("chats")]
+#[db("sqlite")]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "id, sender", order = "id desc")]
 pub struct Chat {
@@ -213,8 +237,8 @@ pub struct Chat {
 }
 
 
-#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug, Columns)]
-#[table_name = "organizations"]
+#[derive(SqliteTemplate, FromRow, Default, Clone, Debug, Columns)]
+#[table("organizations")]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "code")]
 #[tp_select_all(order = "id desc")]
@@ -236,10 +260,12 @@ pub struct Organization {
 
 
 #[multi_query(file = "sql/init.sql", 0)]
+#[db("sqlite")]
 async fn migrate() {}
 
 
 #[insert("INSERT INTO users(email, password, org, active, created_by, updated_by, updated_at) VALUES (:email, :password, :org, true, NULL, NULL, NULL)")]
+#[db("sqlite")]
 async fn insert_new_user(email: &str, password: &str, org: i32) {}
 
 #[select(
@@ -250,6 +276,7 @@ async fn insert_new_user(email: &str, password: &str, org: i32) {}
 ",
     debug = 100
 )]
+#[db("sqlite")]
 pub async fn query_all_user_info(name: &str, org: i32) -> Vec<User> {}
 
 #[select("
@@ -259,6 +286,7 @@ pub async fn query_all_user_info(name: &str, org: i32) -> Vec<User> {}
     WHERE users.email LIKE '%' || :name || '%'
     GROUP BY organizations.id
 ")]
+#[db("sqlite")]
 pub fn query_user_org(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
 
 

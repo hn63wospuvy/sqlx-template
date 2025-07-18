@@ -1277,7 +1277,7 @@ checksum = "d231b230927b5e4ad203db57bbcbee2802f6bce620b1e4a9024a07d94e2907ec"
 
 [[package]]
 name = "postgres"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1777,6 +1777,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "futures-util",
+ "sqlx",
+ "sqlx-template",
+ "structopt",
+ "tokio",
+]
+
+[[package]]
 name = "sqlparser"
 version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1989,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "sqlx-template"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",

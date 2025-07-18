@@ -8,10 +8,14 @@ keywords.workspace = true
 categories.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "sqlite"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0"
 futures = "0.3"
-sqlx-template = { path = "../../", features = ["sqlite", ] }
+sqlx-template = { path = "../../"}
 structopt = "0.3"
 tokio = { version = "1.20.0", features = [ "rt-multi-thread", "macros" ] }
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "postgres", "macros", "uuid", "chrono"] }
