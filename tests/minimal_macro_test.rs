@@ -24,7 +24,7 @@ fn test_minimal_macro() {
 
     // Test field methods
     let builder = MinimalUser::builder_select()
-        .id(123);
+        .id(123).unwrap();
     let sql = builder.build_sql();
     assert!(sql.contains("WHERE"));
     assert!(sql.contains("id = 123"));
@@ -32,8 +32,8 @@ fn test_minimal_macro() {
 
     // Test order by methods
     let builder = MinimalUser::builder_select()
-        .id(123)
-        .order_by_id_desc();
+        .id(123).unwrap()
+        .order_by_id_desc().unwrap();
     let sql = builder.build_sql();
     assert!(sql.contains("ORDER BY"));
     assert!(sql.contains("id DESC"));

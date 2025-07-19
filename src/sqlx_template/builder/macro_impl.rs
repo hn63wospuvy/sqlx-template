@@ -34,43 +34,35 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
     // Build builder with simple parameter storage and manual binding
     quote! {
         /// QueryBuilderArgs for parameter binding
-        #[derive(Default, Clone)]
-        pub struct #args_struct_name {
-            params: Vec<String>,
+
+        pub struct #args_struct_name<'q, DB: sqlx::Database>(pub Box<DB::Arguments<'q>>, usize);
+        impl<'q, DB: sqlx::Database> Default for #args_struct_name<'q, DB> {
+            fn default() -> Self {
+                Self(Box::default(), 0)
+            }
         }
 
-        impl #args_struct_name {
+        impl<'q, DB: sqlx::Database> #args_struct_name<'q, DB> {
             pub fn new() -> Self {
                 Self::default()
             }
 
-            pub fn add_param(&mut self, value: String) {
-                self.params.push(value);
+            pub fn add_param<T: 'q + Send + sqlx::Encode<'q, DB> + sqlx::Type<DB>>(&mut self, arg: T) -> Result<(), sqlx::Error> {
+                use sqlx::Arguments;
+                self.0.add(arg).map_err(|e| sqlx::Error::Encode(e))?;
+                self.1 += 1;
+                Ok(())
             }
-
             pub fn len(&self) -> usize {
-                self.params.len()
-            }
-
-            pub fn is_empty(&self) -> bool {
-                self.params.is_empty()
-            }
-
-            pub fn get_param_count(&self) -> usize {
-                self.params.len()
-            }
-
-            pub fn get_params(&self) -> &[String] {
-                &self.params
+                self.1
             }
         }
 
         /// Generated select builder
-        #[derive(Clone)]
         pub struct #builder_name {
             table_name: String,
             where_conditions: Vec<String>,
-            where_args: #args_struct_name,
+            where_args: #args_struct_name<'static, #database_type>,
             order_by_clauses: Vec<String>,
         }
 
@@ -105,7 +97,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             /// Build SQL query with parameter placeholders
             pub fn build_sql_with_params(&self) -> (String, usize) {
                 let sql = self.build_sql();
-                (sql, self.where_args.get_param_count())
+                (sql, self.where_args.len())
             }
 
             /// Execute query và return single result
@@ -129,11 +121,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 sql.push_str(" LIMIT 1");
 
                 // Manually bind parameters
-                let mut query = sqlx::query_as::<_, #struct_name>(&sql);
-                for param in where_args.get_params() {
-                    query = query.bind(param);
-                }
-                query.fetch_optional(executor).await
+                sqlx::query_as_with(&sql, *where_args.0).fetch_optional(executor).await
             }
 
             /// Execute query và return all results
@@ -156,11 +144,9 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 }
 
                 // Manually bind parameters
-                let mut query = sqlx::query_as::<_, #struct_name>(&sql);
-                for param in where_args.get_params() {
-                    query = query.bind(param);
-                }
-                query.fetch_all(executor).await
+                sqlx::query_as_with(&sql, *where_args.0)
+                    .fetch_all(executor)
+                    .await
             }
         }
 
@@ -208,38 +194,38 @@ fn generate_string_methods(field_name: &Ident, column_name: &str, _database_type
 
     quote! {
         /// Equality condition
-        pub fn #eq_method(mut self, value: impl AsRef<str>) -> Self {
+        pub fn #eq_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} = ?", #column_literal));
-            self.where_args.add_param(value.as_ref().to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// Not equal condition
-        pub fn #not_method(mut self, value: impl AsRef<str>) -> Self {
+        pub fn #not_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} != ?", #column_literal));
-            self.where_args.add_param(value.as_ref().to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// LIKE condition
-        pub fn #like_method(mut self, pattern: impl AsRef<str>) -> Self {
+        pub fn #like_method(mut self, pattern: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} LIKE ?", #column_literal));
-            self.where_args.add_param(pattern.as_ref().to_string());
-            self
+            self.where_args.add_param(pattern.into())?;
+            Ok(self)
         }
 
         /// STARTS WITH condition
-        pub fn #start_with_method(mut self, value: impl AsRef<str>) -> Self {
+        pub fn #start_with_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} LIKE ?", #column_literal));
-            self.where_args.add_param(format!("{}%", value.as_ref()));
-            self
+            self.where_args.add_param(format!("{}%", value.into()))?;
+            Ok(self)
         }
 
         /// ENDS WITH condition
-        pub fn #end_with_method(mut self, value: impl AsRef<str>) -> Self {
+        pub fn #end_with_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} LIKE ?", #column_literal));
-            self.where_args.add_param(format!("%{}", value.as_ref()));
-            self
+            self.where_args.add_param(format!("%{}", value.into()))?;
+            Ok(self)
         }
     }
 }
@@ -270,45 +256,45 @@ fn generate_numeric_datetime_methods(field_name: &Ident, column_name: &str, _dat
 
     quote! {
         /// Equality condition
-        pub fn #eq_method(mut self, value: #field_type) -> Self {
+        pub fn #eq_method(mut self, value: #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} = ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value)?;
+            Ok(self)
         }
 
         /// Not equal condition
-        pub fn #not_method(mut self, value: #field_type) -> Self {
+        pub fn #not_method(mut self, value: #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} != ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value)?;
+            Ok(self)
         }
 
         /// Greater than condition
-        pub fn #gt_method(mut self, value: #field_type) -> Self {
+        pub fn #gt_method(mut self, value: #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} > ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value)?;
+            Ok(self)
         }
 
         /// Greater than or equal condition
-        pub fn #gte_method(mut self, value: #field_type) -> Self {
+        pub fn #gte_method(mut self, value: #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} >= ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value)?;
+            Ok(self)
         }
 
         /// Less than condition
-        pub fn #lt_method(mut self, value: #field_type) -> Self {
+        pub fn #lt_method(mut self, value: #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} < ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value)?;
+            Ok(self)
         }
 
         /// Less than or equal condition
-        pub fn #lte_method(mut self, value: #field_type) -> Self {
+        pub fn #lte_method(mut self, value: #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} <= ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value)?;
+            Ok(self)
         }
     }
 }
@@ -322,17 +308,17 @@ fn generate_basic_methods(field_name: &Ident, column_name: &str, _database_type:
 
     quote! {
         /// Equality condition
-        pub fn #eq_method(mut self, value: #field_type) -> Self {
+        pub fn #eq_method(mut self, value: #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} = ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value)?;
+            Ok(self)
         }
 
         /// Not equal condition
-        pub fn #not_method(mut self, value: #field_type) -> Self {
+        pub fn #not_method(mut self, value: #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} != ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value)?;
+            Ok(self)
         }
     }
 }
@@ -350,21 +336,21 @@ fn generate_order_methods(field: &Field, database: Database) -> TokenStream {
 
     quote! {
         /// Order by field ascending (default)
-        pub fn #order_asc_method(mut self) -> Self {
+        pub fn #order_asc_method(mut self) -> Result<Self, sqlx::Error> {
             self.order_by_clauses.push(format!("{} ASC", #column_literal));
-            self
+            Ok(self)
         }
 
         /// Order by field ascending (explicit)
-        pub fn #order_asc_explicit_method(mut self) -> Self {
+        pub fn #order_asc_explicit_method(mut self) -> Result<Self, sqlx::Error> {
             self.order_by_clauses.push(format!("{} ASC", #column_literal));
-            self
+            Ok(self)
         }
 
         /// Order by field descending
-        pub fn #order_desc_method(mut self) -> Self {
+        pub fn #order_desc_method(mut self) -> Result<Self, sqlx::Error> {
             self.order_by_clauses.push(format!("{} DESC", #column_literal));
-            self
+            Ok(self)
         }
     }
 }
@@ -408,24 +394,23 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
         let column_literal = Literal::string(&column_name);
         let field_type = &field.ty;
 
-        // For string fields, use AsRef<str>, for others use AsRef<field_type>
         let type_str = quote!(#field_type).to_string();
         if is_string_type(&type_str) {
             quote! {
                 /// Set field value for UPDATE
-                pub fn #on_method(mut self, value: impl AsRef<str>) -> Self {
+                pub fn #on_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
                     self.set_clauses.push(format!("{} = ?", #column_literal));
-                    self.where_args.add_param(value.as_ref().to_string());
-                    self
+                    self.where_args.add_param(value.into())?;
+                    Ok(self)
                 }
             }
         } else {
             quote! {
                 /// Set field value for UPDATE
-                pub fn #on_method(mut self, value: #field_type) -> Self {
+                pub fn #on_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
                     self.set_clauses.push(format!("{} = ?", #column_literal));
-                    self.where_args.add_param(value.to_string());
-                    self
+                    self.where_args.add_param(value.into())?;
+                    Ok(self)
                 }
             }
         }
@@ -452,44 +437,37 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
     quote! {
         /// UpdateBuilderArgs for parameter binding
-        #[derive(Default, Clone)]
-        pub struct #args_struct_name {
-            params: Vec<String>,
+
+        pub struct #args_struct_name<'q, DB: sqlx::Database>(pub Box<DB::Arguments<'q>>, usize);
+        impl<'q, DB: sqlx::Database> Default for #args_struct_name<'q, DB> {
+            fn default() -> Self {
+                Self(Box::default(), 0)
+            }
         }
 
-        impl #args_struct_name {
+        impl<'q, DB: sqlx::Database> #args_struct_name<'q, DB> {
             pub fn new() -> Self {
                 Self::default()
             }
 
-            pub fn add_param(&mut self, value: String) {
-                self.params.push(value);
+            pub fn add_param<T: 'q + Send + sqlx::Encode<'q, DB> + sqlx::Type<DB>>(&mut self, arg: T) -> Result<(), sqlx::Error> {
+                use sqlx::Arguments;
+                self.0.add(arg).map_err(|e| sqlx::Error::Encode(e))?;
+                self.1 += 1;
+                Ok(())
             }
-
             pub fn len(&self) -> usize {
-                self.params.len()
-            }
-
-            pub fn is_empty(&self) -> bool {
-                self.params.is_empty()
-            }
-
-            pub fn get_param_count(&self) -> usize {
-                self.params.len()
-            }
-
-            pub fn get_params(&self) -> &[String] {
-                &self.params
+                self.1
             }
         }
 
+
         /// Generated update builder
-        #[derive(Clone)]
         pub struct #builder_name {
             table_name: String,
             set_clauses: Vec<String>,
             where_conditions: Vec<String>,
-            where_args: #args_struct_name,
+            where_args: #args_struct_name<'static, #database_type>,
         }
 
         impl #builder_name {
@@ -538,12 +516,8 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     sql.push_str(&where_conditions.join(" AND "));
                 }
 
-                // Manually bind parameters
-                let mut query = sqlx::query(&sql);
-                for param in where_args.get_params() {
-                    query = query.bind(param);
-                }
-                let result = query.execute(executor).await?;
+
+                let result = sqlx::query_with(&sql, *where_args.0).execute(executor).await?;
                 Ok(result.rows_affected())
             }
         }
@@ -569,38 +543,38 @@ fn generate_update_string_methods(field_name: &Ident, column_name: &str, _databa
 
     quote! {
         /// WHERE equality condition
-        pub fn #by_method(mut self, value: impl AsRef<str>) -> Self {
+        pub fn #by_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} = ?", #column_literal));
-            self.where_args.add_param(value.as_ref().to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// WHERE not equal condition
-        pub fn #by_not_method(mut self, value: impl AsRef<str>) -> Self {
+        pub fn #by_not_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} != ?", #column_literal));
-            self.where_args.add_param(value.as_ref().to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// WHERE LIKE condition
-        pub fn #by_like_method(mut self, pattern: impl AsRef<str>) -> Self {
+        pub fn #by_like_method(mut self, pattern: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} LIKE ?", #column_literal));
-            self.where_args.add_param(pattern.as_ref().to_string());
-            self
+            self.where_args.add_param(pattern.into())?;
+            Ok(self)
         }
 
         /// WHERE STARTS WITH condition
-        pub fn #by_start_with_method(mut self, value: impl AsRef<str>) -> Self {
+        pub fn #by_start_with_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} LIKE ?", #column_literal));
-            self.where_args.add_param(format!("{}%", value.as_ref()));
-            self
+            self.where_args.add_param(format!("{}%", value.into()))?;
+            Ok(self)
         }
 
         /// WHERE ENDS WITH condition
-        pub fn #by_end_with_method(mut self, value: impl AsRef<str>) -> Self {
+        pub fn #by_end_with_method(mut self, value: impl Into<String>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} LIKE ?", #column_literal));
-            self.where_args.add_param(format!("%{}", value.as_ref()));
-            self
+            self.where_args.add_param(format!("%{}", value.into()))?;
+            Ok(self)
         }
     }
 }
@@ -618,45 +592,45 @@ fn generate_update_numeric_datetime_methods(field_name: &Ident, column_name: &st
 
     quote! {
         /// WHERE equality condition
-        pub fn #by_method(mut self, value: #field_type) -> Self {
+        pub fn #by_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} = ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// WHERE not equal condition
-        pub fn #by_not_method(mut self, value: #field_type) -> Self {
+        pub fn #by_not_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} != ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// WHERE greater than condition
-        pub fn #by_gt_method(mut self, value: #field_type) -> Self {
+        pub fn #by_gt_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} > ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// WHERE greater than or equal condition
-        pub fn #by_gte_method(mut self, value: #field_type) -> Self {
+        pub fn #by_gte_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} >= ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// WHERE less than condition
-        pub fn #by_lt_method(mut self, value: #field_type) -> Self {
+        pub fn #by_lt_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} < ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// WHERE less than or equal condition
-        pub fn #by_lte_method(mut self, value: #field_type) -> Self {
+        pub fn #by_lte_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} <= ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
     }
 }
@@ -670,17 +644,17 @@ fn generate_update_basic_methods(field_name: &Ident, column_name: &str, _databas
 
     quote! {
         /// WHERE equality condition
-        pub fn #by_method(mut self, value: #field_type) -> Self {
+        pub fn #by_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} = ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
 
         /// WHERE not equal condition
-        pub fn #by_not_method(mut self, value: #field_type) -> Self {
+        pub fn #by_not_method(mut self, value: impl Into<#field_type>) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(format!("{} != ?", #column_literal));
-            self.where_args.add_param(value.to_string());
-            self
+            self.where_args.add_param(value.into())?;
+            Ok(self)
         }
     }
 }
@@ -709,43 +683,34 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
     quote! {
         /// DeleteBuilderArgs for parameter binding
-        #[derive(Default, Clone)]
-        pub struct #args_struct_name {
-            params: Vec<String>,
+        pub struct #args_struct_name<'q, DB: sqlx::Database>(pub Box<DB::Arguments<'q>>, usize);
+        impl<'q, DB: sqlx::Database> Default for #args_struct_name<'q, DB> {
+            fn default() -> Self {
+                Self(Box::default(), 0)
+            }
         }
 
-        impl #args_struct_name {
+        impl<'q, DB: sqlx::Database> #args_struct_name<'q, DB> {
             pub fn new() -> Self {
                 Self::default()
             }
 
-            pub fn add_param(&mut self, value: String) {
-                self.params.push(value);
+            pub fn add_param<T: 'q + Send + sqlx::Encode<'q, DB> + sqlx::Type<DB>>(&mut self, arg: T) -> Result<(), sqlx::Error> {
+                use sqlx::Arguments;
+                self.0.add(arg).map_err(|e| sqlx::Error::Encode(e))?;
+                self.1 += 1;
+                Ok(())
             }
-
             pub fn len(&self) -> usize {
-                self.params.len()
-            }
-
-            pub fn is_empty(&self) -> bool {
-                self.params.is_empty()
-            }
-
-            pub fn get_param_count(&self) -> usize {
-                self.params.len()
-            }
-
-            pub fn get_params(&self) -> &[String] {
-                &self.params
+                self.1
             }
         }
 
         /// Generated delete builder
-        #[derive(Clone)]
         pub struct #builder_name {
             table_name: String,
             where_conditions: Vec<String>,
-            where_args: #args_struct_name,
+            where_args: #args_struct_name<'static, #database_type>,
         }
 
         impl #builder_name {
@@ -785,11 +750,8 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 }
 
                 // Manually bind parameters
-                let mut query = sqlx::query(&sql);
-                for param in where_args.get_params() {
-                    query = query.bind(param);
-                }
-                let result = query.execute(executor).await?;
+                
+                let result = sqlx::query_with(&sql, *where_args.0).execute(executor).await?;
                 Ok(result.rows_affected())
             }
         }

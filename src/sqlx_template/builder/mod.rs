@@ -93,59 +93,7 @@ impl BuilderField for Field {
     }
 }
 
-// Note: QueryBuilderArgs implementation sẽ được generate trong macro
-// để tránh dependency issues với sqlx trong builder module
 
-/// Determine database type from existing attributes
-fn determine_database_from_attributes(ast: &DeriveInput) -> Result<Database, syn::Error> {
-    // Check for #[db("type")] attribute
-    for attr in &ast.attrs {
-        if attr.path.is_ident("db") {
-            if let Ok(meta) = attr.parse_args::<syn::LitStr>() {
-                return match meta.value().as_str() {
-                    "sqlite" => Ok(Database::Sqlite),
-                    "postgres" => Ok(Database::Postgres),
-                    "mysql" => Ok(Database::Mysql),
-                    "any" => Ok(Database::Any),
-                    db_type => Err(syn::Error::new(
-                        meta.span(),
-                        format!("Unsupported database type: {}", db_type)
-                    )),
-                };
-            }
-        }
-    }
-
-    // Check derive macros to determine database type
-    for attr in &ast.attrs {
-        if attr.path.is_ident("derive") {
-            if let Ok(syn::Meta::List(meta_list)) = attr.parse_meta() {
-                for nested in meta_list.nested {
-                    if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested {
-                        if let Some(ident) = path.get_ident() {
-                            match ident.to_string().as_str() {
-                                "SqliteTemplate" => return Ok(Database::Sqlite),
-                                "PostgresTemplate" => return Ok(Database::Postgres),
-                                "MysqlTemplate" => return Ok(Database::Mysql),
-                                "SqlxTemplate" => {
-                                    // For SqlxTemplate, must have #[db] attribute
-                                    // Continue checking for #[db] attribute below
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // No database info found - this is an error
-    Err(syn::Error::new(
-        proc_macro2::Span::call_site(),
-        "No database type found. Use #[derive(SqliteTemplate)], #[derive(PostgresTemplate)], #[derive(MysqlTemplate)], or #[derive(SqlxTemplate)] with #[db(\"type\")]"
-    ))
-}
 
 /// Re-export macro implementation
 pub use macro_impl::impl_select_builder;
@@ -228,175 +176,26 @@ impl BuilderConfig {
         }
     }
 
-    pub fn from_attributes(args: &str, attrs: &[syn::Attribute], ast: &DeriveInput) -> Result<Self, syn::Error> {
-        // Parse macro arguments
-        let mut database = Database::Sqlite; // default
-        let mut table_name = String::new();
-
-        // Parse args string like 'db = "sqlite", table = "users"'
-        if !args.is_empty() {
-            for part in args.split(',') {
-                let part = part.trim();
-                if let Some((key, value)) = part.split_once('=') {
-                    let key = key.trim();
-                    let value = value.trim().trim_matches('"');
-
-                    match key {
-                        "db" => {
-                            database = match value {
-                                "sqlite" => Database::Sqlite,
-                                "postgres" => Database::Postgres,
-                                "mysql" => Database::Mysql,
-                                "any" => Database::Any,
-                                _ => return Err(syn::Error::new(
-                                    proc_macro2::Span::call_site(),
-                                    format!("Unsupported database: {}", value)
-                                )),
-                            };
-                        }
-                        "table" => {
-                            table_name = value.to_string();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        // If table name not specified in args, try to get from attributes or derive from struct name
-        if table_name.is_empty() {
-            // Look for #[table("name")] attribute
-            for attr in attrs {
-                if attr.path.is_ident("table") {
-                    if let Ok(meta) = attr.parse_args::<syn::LitStr>() {
-                        table_name = meta.value();
-                        break;
-                    }
-                }
-            }
-
-            // If still empty, derive from struct name
-            if table_name.is_empty() {
-                // Fallback: convert struct name to snake_case
-                let struct_name = ast.ident.to_string();
-                table_name = to_snake_case(&struct_name);
-            }
-        }
-
-        let struct_name = ast.ident.to_string();
-
-        // Skip debug_slow for now to avoid calling get_table_name
-        let debug_slow = None; // super::get_debug_slow_from_table_scope(ast);
-
-        let fields = if let syn::Data::Struct(syn::DataStruct {
-            fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
-            ..
-        }) = ast.data
-        {
-            named.iter().cloned().collect()
-        } else {
-            return Err(syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "Builder macro only works with structs with named fields"
-            ));
-        };
-
-        Ok(Self {
-            struct_name,
-            table_name,
-            database,
-            debug_slow,
-            fields,
-        })
-    }
+    
 
     pub fn from_existing_attributes(ast: &DeriveInput) -> Result<Self, syn::Error> {
-        let struct_name = ast.ident.to_string();
-
-        // Parse existing #[table("name")] attribute
-        let table_name = super::get_table_name(ast);
-
-        // Parse existing #[db("type")] attribute or derive macro to determine database
-        let database = determine_database_from_attributes(ast)?;
-
-        // Skip debug_slow for now
-        let debug_slow = None;
-
-        let fields = if let syn::Data::Struct(syn::DataStruct {
-            fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
-            ..
-        }) = ast.data
-        {
-            named.iter().cloned().collect()
-        } else {
-            return Err(syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "Builder macro only works with structs with named fields"
-            ));
-        };
-
-        Ok(Self {
-            struct_name,
-            table_name,
-            database,
-            debug_slow,
-            fields,
-        })
+        let database = super::get_database_from_ast(ast);
+        Ok(Self::from_ast(ast, database))
     }
 }
 
-/// Filter condition for WHERE clause
-#[derive(Debug, Clone)]
-pub enum FilterCondition {
-    Eq(String, String),      // field = value
-    NotEq(String, String),   // field != value
-    Like(String, String),    // field LIKE value
-    NotLike(String, String), // field NOT LIKE value
-    In(String, String),      // field IN (values)
-    NotIn(String, String),   // field NOT IN (values)
-    Gt(String, String),      // field > value
-    Gte(String, String),     // field >= value
-    Lt(String, String),      // field < value
-    Lte(String, String),     // field <= value
-}
 
-impl FilterCondition {
-    pub fn to_sql(&self, db: Database) -> String {
-        match self {
-            FilterCondition::Eq(field, _) => format!("{} = ?", super::check_column_name(field.clone(), db)),
-            FilterCondition::NotEq(field, _) => format!("{} != ?", super::check_column_name(field.clone(), db)),
-            FilterCondition::Like(field, _) => format!("{} LIKE ?", super::check_column_name(field.clone(), db)),
-            FilterCondition::NotLike(field, _) => format!("{} NOT LIKE ?", super::check_column_name(field.clone(), db)),
-            FilterCondition::In(field, _) => format!("{} IN (?)", super::check_column_name(field.clone(), db)),
-            FilterCondition::NotIn(field, _) => format!("{} NOT IN (?)", super::check_column_name(field.clone(), db)),
-            FilterCondition::Gt(field, _) => format!("{} > ?", super::check_column_name(field.clone(), db)),
-            FilterCondition::Gte(field, _) => format!("{} >= ?", super::check_column_name(field.clone(), db)),
-            FilterCondition::Lt(field, _) => format!("{} < ?", super::check_column_name(field.clone(), db)),
-            FilterCondition::Lte(field, _) => format!("{} <= ?", super::check_column_name(field.clone(), db)),
-        }
-    }
 
-    pub fn get_value(&self) -> &String {
-        match self {
-            FilterCondition::Eq(_, v) | FilterCondition::NotEq(_, v) |
-            FilterCondition::Like(_, v) | FilterCondition::NotLike(_, v) |
-            FilterCondition::In(_, v) | FilterCondition::NotIn(_, v) |
-            FilterCondition::Gt(_, v) | FilterCondition::Gte(_, v) |
-            FilterCondition::Lt(_, v) | FilterCondition::Lte(_, v) => v,
-        }
-    }
-}
+// /// Order by clause
+// #[derive(Debug, Clone)]
+// pub struct OrderBy {
+//     pub field: String,
+//     pub ascending: bool,
+// }
 
-/// Order by clause
-#[derive(Debug, Clone)]
-pub struct OrderBy {
-    pub field: String,
-    pub ascending: bool,
-}
-
-impl OrderBy {
-    pub fn to_sql(&self, db: Database) -> String {
-        let direction = if self.ascending { "ASC" } else { "DESC" };
-        format!("{} {}", super::check_column_name(self.field.clone(), db), direction)
-    }
-}
+// impl OrderBy {
+//     pub fn to_sql(&self, db: Database) -> String {
+//         let direction = if self.ascending { "ASC" } else { "DESC" };
+//         format!("{} {}", super::check_column_name(self.field.clone(), db), direction)
+//     }
+// }

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, Sqlite, SqlitePool};
 use sqlx_template::{tp_select_builder, tp_update_builder, tp_delete_builder, SqlxTemplate};
 
-const DB_URL: &str = "sqlite://builder_example.db";
+const DB_URL: &str = "sqlite::memory:";
 
 #[derive(SqlxTemplate, FromRow, Debug, Clone)]
 #[table("users")]
@@ -40,7 +40,7 @@ pub struct Post {
 async fn main() -> Result<(), sqlx::Error> {
     println!("🚀 SQLx Template Builder Example");
     
-    let fresh = if !Sqlite::database_exists(DB_URL).await.unwrap_or(false) {
+    let fresh = if !Sqlite::database_exists(DB_URL).await.unwrap_or(false) || DB_URL.contains("memory") {
         println!("Creating database {}", DB_URL);
         match Sqlite::create_database(DB_URL).await {
             Ok(_) => {
@@ -83,7 +83,7 @@ async fn setup_database(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             name TEXT NOT NULL,
             age INTEGER NOT NULL,
             score REAL NOT NULL DEFAULT 0.0,
-            active INTEGER NOT NULL DEFAULT 1,
+            active BOOLEAN NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
         )
         "#,
@@ -176,41 +176,41 @@ async fn example_user_operations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     // Find users by email
     let user = User::builder_select()
-        .email("john@example.com")
+        .email("john@example.com")?
         .find_one(pool)
         .await?;
     println!("   📧 User by email: {:?}", user.map(|u| u.name));
 
     // Find active users older than 18
     let adult_users = User::builder_select()
-        .active(true)
-        .age_gt(18)
-        .order_by_age_desc()
+        .active(true)?
+        .age_gt(18)?
+        .order_by_age_desc()?
         .find_all(pool)
         .await?;
     println!("   🔞 Adult active users: {} found", adult_users.len());
 
     // Find users with high scores
     let high_score_users = User::builder_select()
-        .score_gte(85.0)
-        .active(true)
-        .order_by_score_desc()
-        .order_by_name_asc()
+        .score_gte(85.0)?
+        .active(true)?
+        .order_by_score_desc()?
+        .order_by_name_asc()?
         .find_all(pool)
         .await?;
     println!("   🏆 High score users: {} found", high_score_users.len());
 
     // Find users by name pattern
     let users_with_john = User::builder_select()
-        .name_like("%John%")
+        .name_like("%John%")?
         .find_all(pool)
         .await?;
     println!("   🔤 Users with 'John' in name: {} found", users_with_john.len());
 
     // Find users by email domain
     let gmail_users = User::builder_select()
-        .email_end_with("@gmail.com")
-        .active(true)
+        .email_end_with("@gmail.com")?
+        .active(true)?
         .find_all(pool)
         .await?;
     println!("   📮 Gmail users: {} found", gmail_users.len());
@@ -220,17 +220,17 @@ async fn example_user_operations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     // Update user score
     let updated_rows = User::builder_update()
-        .on_score(95.5)
-        .on_active(true)
-        .by_email("john@example.com")
+        .on_score(95.5)?
+        .on_active(true)?
+        .by_email("john@example.com")?
         .execute(pool)
         .await?;
     println!("   📈 Updated {} user(s) score", updated_rows);
 
     // Deactivate old users
     let deactivated_rows = User::builder_update()
-        .on_active(false)
-        .by_age_gt(65)
+        .on_active(false)?
+        .by_age_gt(65)?
         .execute(pool)
         .await?;
     println!("   👴 Deactivated {} old user(s)", deactivated_rows);
@@ -240,7 +240,7 @@ async fn example_user_operations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     // Delete inactive users
     let deleted_inactive = User::builder_delete()
-        .active(false)
+        .active(false)?
         .execute(pool)
         .await?;
     println!("   ❌ Deleted {} inactive user(s)", deleted_inactive);
@@ -256,33 +256,33 @@ async fn example_post_operations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     // Find published posts
     let published_posts = Post::builder_select()
-        .published(true)
-        .order_by_created_at_desc()
+        .published(true)?
+        .order_by_created_at_desc()?
         .find_all(pool)
         .await?;
     println!("   📰 Published posts: {} found", published_posts.len());
 
     // Find popular posts
     let popular_posts = Post::builder_select()
-        .view_count_gt(100)
-        .published(true)
-        .order_by_view_count_desc()
+        .view_count_gt(100)?
+        .published(true)?
+        .order_by_view_count_desc()?
         .find_all(pool)
         .await?;
     println!("   🔥 Popular posts: {} found", popular_posts.len());
 
     // Find posts by title pattern
     let tech_posts = Post::builder_select()
-        .title_like("%Tech%")
-        .published(true)
+        .title_like("%Tech%")?
+        .published(true)?
         .find_all(pool)
         .await?;
     println!("   💻 Tech posts: {} found", tech_posts.len());
 
     // Find posts by user
     let user_posts = Post::builder_select()
-        .user_id(1)
-        .order_by_created_at_desc()
+        .user_id(1)?
+        .order_by_created_at_desc()?
         .find_all(pool)
         .await?;
     println!("   👤 Posts by user 1: {} found", user_posts.len());
@@ -292,9 +292,9 @@ async fn example_post_operations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     // Publish draft posts
     let published_count = Post::builder_update()
-        .on_published(true)
-        .by_published(false)
-        .by_title_like("%Ready%")
+        .on_published(true)?
+        .by_published(false)?
+        .by_title_like("%Ready%")?
         .execute(pool)
         .await?;
     println!("   📤 Published {} draft post(s)", published_count);
@@ -308,8 +308,8 @@ async fn example_post_operations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .with_timezone(&Utc);
 
     let deleted_old = Post::builder_delete()
-        .published(false)
-        .created_at_lt(old_date)
+        .published(false)?
+        .created_at_lt(old_date)?
         .execute(pool)
         .await?;
     println!("   🗂️ Deleted {} old unpublished post(s)", deleted_old);
@@ -322,36 +322,38 @@ async fn example_complex_queries(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     // Complex user filtering
     let complex_users = User::builder_select()
-        .active(true)
-        .age_gte(21)
-        .age_lte(65)
-        .score_gt(50.0)
-        .email_not("admin@example.com")
-        .name_start_with("J")
-        .order_by_score_desc()
-        .order_by_age_asc()
-        .find_all(pool)
+        .active(true)?
+        .age_gte(21)?
+        .age_lte(65)?
+        .score_gt(50.0)?
+        .email_not("admin@example.com")?
+        .name_start_with("J")?
+        .order_by_score_desc()?
+        .order_by_age_asc()?
+        ;
+    println!("SQL: {}", complex_users.build_sql());
+    let complex_users =   complex_users.find_all(pool)
         .await?;
     println!("   🎯 Complex filtered users: {} found", complex_users.len());
 
     // Complex post filtering
     let complex_posts = Post::builder_select()
-        .published(true)
-        .view_count_gte(50)
-        .view_count_lte(1000)
-        .title_not("Draft")
-        .content_like("%important%")
-        .order_by_view_count_desc()
+        .published(true)?
+        .view_count_gte(50)?
+        .view_count_lte(1000)?
+        .title_not("Draft")?
+        .content_like("%important%")?
+        .order_by_view_count_desc()?
         .find_all(pool)
         .await?;
     println!("   📊 Complex filtered posts: {} found", complex_posts.len());
 
     // Bulk operations
     let bulk_update = User::builder_update()
-        .on_score(75.0)
-        .by_score_gte(70.0)
-        .by_score_lt(80.0)
-        .by_active(true)
+        .on_score(75.0)?
+        .by_score_gte(70.0)?
+        .by_score_lt(80.0)?
+        .by_active(true)?
         .execute(pool)
         .await?;
     println!("   📦 Bulk updated {} user(s) scores", bulk_update);
