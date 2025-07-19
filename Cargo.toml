@@ -43,8 +43,13 @@ anyhow = "1.0"
 futures = "0.3"
 structopt = "0.3"
 tokio = { version = "1.20.0", features = [ "rt-multi-thread", "macros" ] }
-sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "postgres", "macros", "uuid", "chrono"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres", "macros", "uuid", "chrono"] }
 futures-util = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+
+[[example]]
+name = "builder_example"
+path = "examples/builder_example.rs"
 
 
 [features]

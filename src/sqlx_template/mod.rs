@@ -20,6 +20,7 @@ pub mod upsert;
 pub mod raw;
 pub mod ddl;
 pub mod proc;
+pub mod builder;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) enum Scope {
@@ -465,6 +466,10 @@ pub fn has_duplicates(vec: &Vec<Field>) -> bool {
     false
 }
 
+pub fn has_attribute(input: &DeriveInput, attr_name: &str) -> bool {
+    input.attrs.iter().any(|attr| attr.path.is_ident(attr_name))
+}
+
 pub fn derive_all(input: &DeriveInput, for_path: Option<&syn::Path>, scope: Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let table_name = table_name_derive(&input)?;
     let insert = insert::derive_insert(&input, for_path, scope, db)?;
@@ -472,6 +477,9 @@ pub fn derive_all(input: &DeriveInput, for_path: Option<&syn::Path>, scope: Scop
     let select = select::derive_select(&input, for_path, scope, db)?;
     let delete = delete::derive_delete(&input, for_path, scope, db)?;
     let upsert = upsert::derive_upsert(&input, for_path, scope, db)?;
+
+    // Note: Builder generation is handled by individual derive functions
+    // to avoid duplicate generation when using SqlxTemplate
 
     Ok(quote! {
         #table_name

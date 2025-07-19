@@ -230,20 +230,31 @@ pub fn derive_select(
         db,
     )));
 
+    // Check for tp_select_builder attribute and generate builder if present
+    let builder_code = if super::has_attribute(ast, "tp_select_builder") {
+        let config = super::builder::BuilderConfig::from_existing_attributes(ast)?;
+        Some(super::builder::macro_impl::impl_select_builder(ast, &config))
+    } else {
+        None
+    };
+
     let expanded = match scope {
         super::Scope::Struct => quote! {
             impl #struct_name {
                 #(#functions)*
             }
+            #builder_code
         },
         super::Scope::Mod => quote! {
             #(#functions)*
+            #builder_code
         },
         super::Scope::NewMod => {
             let new_mod = super::create_ident(&table_name);
             quote! {
                 pub mod #new_mod {
                     #(#functions)*
+                    #builder_code
                 }
             }
         }
