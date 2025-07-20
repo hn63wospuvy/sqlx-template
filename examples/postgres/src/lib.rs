@@ -15,7 +15,7 @@ pub struct Page<T> {
 #[derive(PostgresTemplate, FromRow, Default, Clone, Debug)]
 #[table("chats")]
 // #[tp_select_one(where = "active = true")]
-#[tp_delete(where = "active = :active and 2 * id > :id", returning = true)]
+#[tp_delete(where = "active = :active and 2 * id > :min_id$i32", returning = true)]
 // #[tp_select_one(by = "id, sender", order = "id desc", where = "active = :active", fn_name = "get_by_sender_active")]
 #[tp_update(by = "id", where = "groups = :sender", returning = true)]
 #[tp_update(by = "id", on = "content", where = "access = :sender", returning = "id, sender")]

@@ -31,6 +31,11 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
         generate_order_methods(field, config.database)
     }).collect::<Vec<_>>();
 
+    // Generate custom condition methods
+    // let custom_methods = config.custom_conditions.iter().map(|condition| {
+    //     generate_custom_condition_method(condition, config.database)
+    // }).collect::<Vec<_>>();
+
     // Build builder with simple parameter storage and manual binding
     quote! {
         /// QueryBuilderArgs for parameter binding
@@ -94,6 +99,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
             #(#field_methods)*
             #(#order_methods)*
+            // #(#custom_methods)*
 
             /// Build SQL query string
             pub fn build_sql(&self) -> String {
@@ -134,7 +140,6 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     sql.push_str(" ORDER BY ");
                     sql.push_str(&order_by_clauses.join(", "));
                 }
-                sql.push_str(" LIMIT 1");
 
                 // Manually bind parameters
                 sqlx::query_as_with(&sql, *where_args.0).fetch_optional(executor).await
@@ -882,6 +887,64 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             pub fn builder_delete<'q>() -> #builder_name<'q> {
                 #builder_name::new()
             }
+        }
+    }
+}
+
+/// Generate custom condition method for builder
+fn generate_custom_condition_method(condition: &super::CustomCondition, database: Database) -> TokenStream {
+    use crate::parser;
+
+    let method_name = quote::format_ident!("and_{}", condition.method_name);
+    let sql_expression = &condition.sql_expression;
+
+    // Generate method parameters based on placeholders
+    let method_params = condition.parameters.iter().map(|param| {
+        let param_ident = quote::format_ident!("{}", param);
+        quote! { #param_ident: &'q str }
+    }).collect::<Vec<_>>();
+
+    // Generate parameter binding code
+    let param_bindings = condition.parameters.iter().map(|param| {
+        let param_ident = quote::format_ident!("{}", param);
+        quote! {
+            self.where_args.add_param(#param_ident)?;
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate placeholder replacement code for each parameter
+    let placeholder_replacements = condition.parameters.iter().map(|param| {
+        let param_name = param.clone();
+        quote! {
+            let param_placeholder = format!(":{}", #param_name);
+            while let Some(pos) = condition_sql.find(&param_placeholder) {
+                let replacement = format!("${}", param_counter);
+                condition_sql.replace_range(pos..pos + param_placeholder.len(), &replacement);
+                param_counter += 1;
+            }
+        }
+    }).collect::<Vec<_>>();
+
+    quote! {
+        /// Add custom condition
+        pub fn #method_name(mut self, #(#method_params),*) -> Result<Self, sqlx::Error> {
+            // Calculate the starting parameter position
+            let start_pos = self.where_args.len() + 1;
+
+            // Replace placeholders with actual parameter positions
+            let mut condition_sql = #sql_expression.to_string();
+            let mut param_counter = start_pos;
+
+            // Replace each placeholder
+            #(#placeholder_replacements)*
+
+            // Add parameters to args
+            #(#param_bindings)*
+
+            // Add condition to where clauses
+            self.where_conditions.push(condition_sql);
+
+            Ok(self)
         }
     }
 }

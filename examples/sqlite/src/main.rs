@@ -136,6 +136,52 @@ async fn main() {
     let upserted_user = User::find_one_by_email(&"user3@abc.com".to_string(), &db).await.unwrap().unwrap();
     println!("Upserted user: {upserted_user:#?}");
 
+    // Test new WHERE clause functions
+    println!("\n=== Testing WHERE clause functions ===");
+
+    // Test 1: SELECT with WHERE only (email and active mapping)
+    println!("1. Testing find_by_email_and_active:");
+    let user = User::find_by_email_and_active("user1@abc.com", &true, &db).await.unwrap();
+    println!("   Found user: {:?}", user.map(|u| format!("{}({})", u.email, u.active)));
+
+    // Test 2: SELECT with BY + WHERE (org mapping + version custom type)
+    println!("2. Testing find_active_by_org_and_version:");
+    let users = User::find_active_by_org_and_version(&Some(org_1.id), &true, &0, &db).await.unwrap();
+    println!("   Found {} active users in org {} with version > 0", users.len(), org_1.id);
+
+    // Test 3: COUNT with WHERE (custom type)
+    println!("3. Testing count_recent_users:");
+    let count = User::count_recent_users(&"2020-01-01T00:00:00Z".to_string(), &db).await.unwrap();
+    println!("   Found {} users created after 2020-01-01", count);
+
+    // Test 4: UPDATE with WHERE (active mapping)
+    println!("4. Testing update_password_if_active:");
+    let rows = User::update_password_if_active("user2@abc.com", "new_secure_password", &true, &db).await.unwrap();
+    println!("   Updated {} active users' passwords", rows);
+
+    // Test 5: DELETE with WHERE (active mapping + version custom type)
+    println!("5. Testing delete_old_inactive:");
+    let rows = User::delete_old_inactive(&false, &999, &db).await.unwrap();
+    println!("   Deleted {} old inactive users", rows);
+
+    // Test 6: UPSERT with WHERE (version custom type)
+    println!("6. Testing upsert_if_version_below:");
+    let test_user = User {
+        id: 999,
+        email: "test@example.com".to_string(),
+        password: "test_password".to_string(),
+        org: Some(org_1.id),
+        active: true,
+        version: 1,
+        created_by: Some("test".to_string()),
+        created_at: chrono::Utc::now(),
+        updated_by: None,
+        updated_at: None,
+    };
+    let rows = User::upsert_if_version_below(&test_user, &10, &db).await.unwrap();
+    println!("   Upserted {} users with version < 10", rows);
+
+    println!("=== All WHERE clause tests completed! ===");
 
 }
 
@@ -198,9 +244,16 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_select_one(by = "email")]
 #[tp_select_page(by = "org", order = "id desc, org desc")]
 #[tp_select_count(by = "id, email")]
+// New WHERE clause examples
+#[tp_select_one(where = "email = :email and active = :active", fn_name = "find_by_email_and_active")]
+#[tp_select_all(by = "org", where = "active = :active and version > :min_version$i32", fn_name = "find_active_by_org_and_version")]
+#[tp_select_count(where = "created_at > :since$String", fn_name = "count_recent_users")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
+#[tp_update(by = "email", on = "password", where = "active = :active", fn_name = "update_password_if_active")]
+#[tp_delete(where = "active = :active and version < :max_version$i32", fn_name = "delete_old_inactive")]
 #[tp_select_stream(order = "id desc")]
 #[tp_upsert(by = "email", update = "password, updated_at")]
+#[tp_upsert(by = "id", where = "version < :max_version$i32", fn_name = "upsert_if_version_below")]
 pub struct User {
     #[auto]
     pub id: i32,

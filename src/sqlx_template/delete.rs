@@ -6,7 +6,7 @@ use syn::{
     parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, Path, Token
 };
 
-use crate::{parser, sqlx_template::{get_database_from_ast, get_field_name_as_column, Database}};
+use crate::{parser, sqlx_template::{check_column_name, get_database_from_ast, get_field_name_as_column, Database}};
 
 use super::{get_debug_slow_from_table_scope, get_field_name, get_table_name, Scope};
 
@@ -200,7 +200,8 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     let par_res = parser::get_columns_and_compound_ids(&where_stmt_str, super::get_database_dialect(db)).unwrap();
 
                     for col in &par_res.columns {
-                        if !all_columns_name.contains(&col) {
+                        let normalized_col = check_column_name(col.clone(), db);
+                        if !all_columns_name.contains(&normalized_col) {
                             panic!("Invalid where statement: {col} column is not found in field list");
                         }
                     }
@@ -218,36 +219,67 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                             .iter()
                             .map(|x| (get_field_name(x), x.clone()))
                             .collect::<HashMap<_, _>>();
-                        let mut extend_fields = par_res.placeholder_vars.iter()
-                        .filter_map(|p| {
-                            let p = &p[1..];
-                            if !all_fields_map.contains_key(p) {
-                                panic!("Field {p} is not found in list columns name");
-                            }
-                            
-                            all_fields_map.get(p)
-                            .map(|field|{
-                                let arg_name = field.ident.as_ref().unwrap();
-                                let arg_type = &field.ty;
-                                if by_fields_map.contains_key(p) {
-                                    (quote! {
-                                        .bind(#arg_name)
-                                    }, 
-                                    None)
-                                }
-                                else if &arg_type.to_token_stream().to_string() == "String" {
-                                    (quote! {
-                                        .bind(#arg_name)
-                                    }, 
-                                    Some(quote! { #arg_name: &'c str }))
+                        let mut extend_fields = Vec::new();
+
+                        // Process placeholders in order they appear in the SQL
+                        for placeholder in &par_res.placeholder_vars {
+                            let placeholder_name = &placeholder[1..]; // Remove ':' prefix
+
+                            // Check if placeholder has format :name$Type - if so, always use Case 2
+                            if placeholder_name.contains('$') {
+                                // Case 2: Placeholder with custom type format :name$Type
+                                if let Some(dollar_pos) = placeholder_name.find('$') {
+                                    let var_name = &placeholder_name[..dollar_pos];
+                                    let type_name = &placeholder_name[dollar_pos + 1..];
+
+                                    let arg_name = syn::Ident::new(var_name, proc_macro2::Span::call_site());
+                                    let arg_type: syn::Type = syn::parse_str(type_name)
+                                        .unwrap_or_else(|_| panic!("Invalid type in placeholder {placeholder}: {type_name}"));
+
+                                    let bind_expr = quote! { .bind(#arg_name) };
+                                    let arg_expr = Some(quote! { #arg_name: &'c #arg_type });
+
+                                    extend_fields.push((bind_expr, arg_expr));
                                 } else {
-                                    (quote! {
-                                        .bind(#arg_name)
-                                    }, 
-                                    Some(quote! { #arg_name: &'c #arg_type }))
+                                    panic!("Placeholder {placeholder} contains '$' but format is invalid");
                                 }
-                            })
-                        }).collect::<Vec<_>>();
+                            }
+                            // Check if placeholder is mapped to a column
+                            else if let Some(columns) = par_res.get_columns_for_placeholder(placeholder) {
+                                // Case 1: Placeholder is mapped to a column (and doesn't have $ format)
+                                if columns.len() == 1 {
+                                    let column_name = columns.iter().next().unwrap();
+                                    // Find the corresponding field in struct
+                                    if let Some(field) = all_fields_map.get(column_name) {
+                                        let arg_name = syn::Ident::new(placeholder_name, proc_macro2::Span::call_site());
+                                        let arg_type = &field.ty;
+
+                                        // Check if this field is already in by_fields (avoid duplication)
+                                        if !by_fields_map.contains_key(column_name) {
+                                            let bind_expr = quote! { .bind(#arg_name) };
+                                            let arg_expr = if &arg_type.to_token_stream().to_string() == "String" {
+                                                Some(quote! { #arg_name: &'c str })
+                                            } else {
+                                                Some(quote! { #arg_name: &'c #arg_type })
+                                            };
+
+                                            extend_fields.push((bind_expr, arg_expr));
+                                        } else {
+                                            // Field already in by_fields, just add binding
+                                            let field_arg_name = field.ident.as_ref().unwrap();
+                                            extend_fields.push((quote! { .bind(#field_arg_name) }, None));
+                                        }
+                                    } else {
+                                        panic!("Column {column_name} mapped by placeholder {placeholder} is not found in struct fields");
+                                    }
+                                } else {
+                                    panic!("Placeholder {placeholder} is mapped to multiple columns: {:?}", columns);
+                                }
+                            } else {
+                                // Case 3: Placeholder is not mapped to any column and doesn't have $ format
+                                panic!("Placeholder {placeholder} is not mapped to any column and doesn't have format :name$Type");
+                            }
+                        }
                         let (mut bind_vec, mut args_vec) = extend_fields.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
                         let mut args_vec = args_vec.into_iter().filter_map(|x| x).collect::<Vec<_>>();
                         fn_args.append(&mut args_vec);

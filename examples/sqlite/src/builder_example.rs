@@ -344,9 +344,9 @@ async fn example_complex_queries(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .title_not("Draft")?
         .content_like("%important%")?
         .order_by_view_count_desc()?
-        .find_all(pool)
+        .count(pool)
         .await?;
-    println!("   📊 Complex filtered posts: {} found", complex_posts.len());
+    println!("   📊 Complex filtered posts: {} found", complex_posts);
 
     // Bulk operations
     let bulk_update = User::builder_update()

@@ -435,25 +435,92 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 let set_stmt = set_stmt.join(", ");
                 let current_idx = set_fields.len();
 
-                let where_stmt = match where_stmt_str {
+                let (where_stmt, where_placeholders_sql, where_extend_fields) = match where_stmt_str {
                     Some(sql) => {
                         let par_res = parser::get_columns_and_compound_ids(&sql, super::get_database_dialect(db)).unwrap();
-                        if !par_res.placeholder_vars.is_empty() {
-                            panic!("Placeholder var is not allowed here: {:?}", par_res.placeholder_vars);
-                        }
+
                         for col in &par_res.columns {
-                            if !all_columns_name.contains(&col) {
+                            let normalized_col = check_column_name(col.clone(), db);
+                            if !all_columns_name.contains(&normalized_col) {
                                 panic!("Invalid where statement: {col} column is not found in field list");
                             }
                         }
-                        for table in par_res.tables {
-                            if table != table_name && table != "EXCLUDED" {
+                        for table in &par_res.tables {
+                            if table != &table_name && table != "EXCLUDED" {
                                 panic!("Invalid where statement: {table} is not allowed. Only {table_name} or EXCLUDED are permitted.");
                             }
                         }
-                        format!("WHERE {sql}")
+
+                        let mut extend_fields = Vec::new();
+                        let mut where_sql = sql.clone();
+
+                        if !par_res.placeholder_vars.is_empty() {
+                            let all_fields_map = all_fields
+                                .iter()
+                                .map(|x| (get_field_name(x), x.clone()))
+                                .collect::<std::collections::HashMap<_, _>>();
+
+                            // Process placeholders in order they appear in the SQL
+                            for placeholder in &par_res.placeholder_vars {
+                                let placeholder_name = &placeholder[1..]; // Remove ':' prefix
+
+                                // Check if placeholder has format :name$Type - if so, always use Case 2
+                                if placeholder_name.contains('$') {
+                                    // Case 2: Placeholder with custom type format :name$Type
+                                    if let Some(dollar_pos) = placeholder_name.find('$') {
+                                        let var_name = &placeholder_name[..dollar_pos];
+                                        let type_name = &placeholder_name[dollar_pos + 1..];
+
+                                        let arg_name = syn::Ident::new(var_name, proc_macro2::Span::call_site());
+                                        let arg_type: syn::Type = syn::parse_str(type_name)
+                                            .unwrap_or_else(|_| panic!("Invalid type in placeholder {placeholder}: {type_name}"));
+
+                                        let bind_expr = quote! { .bind(&#arg_name) };
+                                        let arg_expr = Some(quote! { #arg_name: &#arg_type });
+
+                                        extend_fields.push((bind_expr, arg_expr));
+                                    } else {
+                                        panic!("Placeholder {placeholder} contains '$' but format is invalid");
+                                    }
+                                }
+                                // Check if placeholder is mapped to a column
+                                else if let Some(columns) = par_res.get_columns_for_placeholder(placeholder) {
+                                    // Case 1: Placeholder is mapped to a column (and doesn't have $ format)
+                                    if columns.len() == 1 {
+                                        let column_name = columns.iter().next().unwrap();
+                                        // Find the corresponding field in struct
+                                        if let Some(field) = all_fields_map.get(column_name) {
+                                            let arg_name = syn::Ident::new(placeholder_name, proc_macro2::Span::call_site());
+                                            let arg_type = &field.ty;
+
+                                            let bind_expr = quote! { .bind(&#arg_name) };
+                                            let arg_expr = if &arg_type.to_token_stream().to_string() == "String" {
+                                                Some(quote! { #arg_name: &str })
+                                            } else {
+                                                Some(quote! { #arg_name: &#arg_type })
+                                            };
+
+                                            extend_fields.push((bind_expr, arg_expr));
+                                        } else {
+                                            panic!("Column {column_name} mapped by placeholder {placeholder} is not found in struct fields");
+                                        }
+                                    } else {
+                                        panic!("Placeholder {placeholder} is mapped to multiple columns: {:?}", columns);
+                                    }
+                                } else {
+                                    // Case 3: Placeholder is not mapped to any column and doesn't have $ format
+                                    panic!("Placeholder {placeholder} is not mapped to any column and doesn't have format :name$Type");
+                                }
+                            }
+
+                            let start_counter = insert_fields.len() + 1;
+                            let (processed_sql, _) = parser::replace_placeholder(&where_sql, par_res.placeholder_vars, Some(start_counter as i32));
+                            where_sql = processed_sql;
+                        }
+
+                        (format!("WHERE {}", where_sql), where_sql, extend_fields)
                     }
-                    _ => String::new()
+                    _ => (String::new(), String::new(), Vec::new())
                 };
 
                 let sql = match db {
@@ -470,11 +537,18 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     _ => panic!("Unsupported database for upsert")
                 };
                 super::check_valid_single_sql(&sql, db);
-                let binds = insert_fields.iter().map(|field| {
+                let insert_binds = insert_fields.iter().map(|field| {
                     quote! {
                         .bind(&re.#field)
                     }
                 });
+
+                // Combine insert binds with WHERE placeholder binds
+                let (where_bind_vec, where_args_vec): (Vec<_>, Vec<_>) = where_extend_fields.into_iter().unzip();
+                let where_args_vec: Vec<_> = where_args_vec.into_iter().filter_map(|x| x).collect();
+
+                let all_binds = insert_binds.chain(where_bind_vec.into_iter());
+                let binds = all_binds.collect::<Vec<_>>();
 
 
 
@@ -497,8 +571,13 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     };
                     super::check_valid_single_sql(&sql_return, db);
                     let binds_return = binds.clone();
+                    let fn_args = if where_args_vec.is_empty() {
+                        quote! { re: &#struct_name, conn: E }
+                    } else {
+                        quote! { re: &#struct_name, #(#where_args_vec,)* conn: E }
+                    };
                     quote! {
-                        pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> core::result::Result<#struct_name, sqlx::Error> {
+                        pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args) -> core::result::Result<#struct_name, sqlx::Error> {
                             let sql = #sql_return;
                             #dbg_before
                             let res = sqlx::query_as::<_, #struct_name>(sql)
@@ -510,8 +589,13 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         }
                     }
                 } else {
+                    let fn_args = if where_args_vec.is_empty() {
+                        quote! { re: &#struct_name, conn: E }
+                    } else {
+                        quote! { re: &#struct_name, #(#where_args_vec,)* conn: E }
+                    };
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> core::result::Result<u64, sqlx::Error> {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args) -> core::result::Result<u64, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
                             let query = sqlx::query(sql)

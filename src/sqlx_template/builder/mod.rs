@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Field, Type as SynType};
@@ -141,6 +141,15 @@ pub fn generate_order_method_names(field_name: &str) -> HashMap<String, String> 
     methods
 }
 
+/// Represents a custom condition for builder
+#[derive(Clone, Debug)]
+pub struct CustomCondition {
+    pub method_name: String,  // e.g., "with_email"
+    pub sql_expression: String,  // e.g., "email = :email"
+    pub parameters: Vec<String>,  // e.g., ["email"]
+    pub columns: Vec<String>,  // e.g., ["email"] - columns referenced in expression
+}
+
 /// Common builder configuration
 #[derive(Clone)]
 pub struct BuilderConfig {
@@ -149,6 +158,7 @@ pub struct BuilderConfig {
     pub database: Database,
     pub debug_slow: Option<i32>,
     pub fields: Vec<Field>,
+    pub custom_conditions: Vec<CustomCondition>,
 }
 
 impl BuilderConfig {
@@ -173,14 +183,104 @@ impl BuilderConfig {
             database: db,
             debug_slow,
             fields,
+            custom_conditions: Vec::new(),
         }
     }
 
     
 
     pub fn from_existing_attributes(ast: &DeriveInput, db: Database) -> Result<Self, syn::Error> {
-        Ok(Self::from_ast(ast, db))
+        let mut config = Self::from_ast(ast, db);
+
+        // Parse custom conditions from tp_select_builder attributes
+        config.custom_conditions = Self::parse_custom_conditions(ast, &config.fields, db)?;
+
+        Ok(config)
     }
+
+    /// Parse custom conditions from tp_select_builder attributes
+    fn parse_custom_conditions(ast: &DeriveInput, fields: &[Field], db: Database) -> Result<Vec<CustomCondition>, syn::Error> {
+        use syn::{Meta, NestedMeta, Lit};
+
+        let mut custom_conditions = Vec::new();
+
+        // Get all field names for validation
+        let field_names: HashSet<String> = fields
+            .iter()
+            .filter_map(|f| f.ident.as_ref().map(|i| i.to_string()))
+            .collect();
+
+        for attr in &ast.attrs {
+            if let Ok(Meta::List(meta_list)) = attr.parse_meta() {
+                if meta_list.path.is_ident("tp_select_builder") {
+                    for nested in &meta_list.nested {
+                        if let NestedMeta::Meta(Meta::NameValue(name_value)) = nested {
+                            let method_name = name_value.path.get_ident()
+                                .ok_or_else(|| syn::Error::new_spanned(&name_value.path, "Expected identifier"))?
+                                .to_string();
+
+                            if let Lit::Str(lit_str) = &name_value.lit {
+                                let sql_expression = lit_str.value();
+
+                                // Parse the SQL expression to extract columns and parameters
+                                let (columns, parameters) = Self::parse_sql_expression(&sql_expression, &field_names, db)?;
+
+                                custom_conditions.push(CustomCondition {
+                                    method_name,
+                                    sql_expression,
+                                    parameters,
+                                    columns,
+                                });
+                            } else {
+                                return Err(syn::Error::new_spanned(&name_value.lit, "Expected string literal"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(custom_conditions)
+    }
+
+    /// Parse SQL expression to extract columns and parameters
+    fn parse_sql_expression(
+        sql_expr: &str,
+        field_names: &HashSet<String>,
+        db: Database
+    ) -> Result<(Vec<String>, Vec<String>), syn::Error> {
+        // // For now, use a simple regex-based approach to extract placeholders
+        // // This avoids the parsing issues during macro compilation
+        // let placeholder_regex = regex::Regex::new(r":(\w+)").unwrap();
+        // let placeholders: Vec<String> = placeholder_regex
+        //     .captures_iter(sql_expr)
+        //     .map(|cap| cap[1].to_string())
+        //     .collect();
+
+        // // Extract column names using a simple regex approach
+        // // This is a simplified approach - we'll extract identifiers that look like column names
+        // let column_regex = regex::Regex::new(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b").unwrap();
+        // let mut columns = Vec::new();
+
+        // for cap in column_regex.captures_iter(sql_expr) {
+        //     let word = &cap[1];
+        //     // Skip SQL keywords and placeholders
+        //     if !Self::is_sql_keyword(word) && !placeholders.contains(&word.to_string()) {
+        //         if field_names.contains(word) {
+        //             columns.push(word.to_string());
+        //         }
+        //     }
+        // }
+
+        // // Remove duplicates
+        // columns.sort();
+        // columns.dedup();
+
+        // Ok((columns, placeholders))
+        todo!()
+    }
+
+    
 }
 
 

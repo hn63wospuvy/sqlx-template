@@ -72,6 +72,9 @@ async fn main() {
     let users = query_all_user_info("user", 0, &db).await.unwrap();
     println!("Query Users: {users:#?}");
 
+    let users = User::get_last_inserted(&1, &db).await.unwrap();
+    println!("Last inserted user: {users:#?}");
+
     // Stream all users order by id
 
     let mut users = User::stream_order_by_id_desc(&db);
@@ -191,7 +194,8 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_delete(by = "id")]
 #[tp_delete(by = "id, email")]
 #[tp_select_all(by = "id, email", order = "id desc")]
-#[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
+#[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted", where = "active = true AND id > :id")]
+// #[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
 #[tp_select_one(by = "email")]
 #[tp_select_one(by = "group")]
 #[tp_select_page(by = "org", order = "id desc, org desc")]

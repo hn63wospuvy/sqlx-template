@@ -48,9 +48,12 @@ futures-util = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 
 [[example]]
-name = "builder_example"
-path = "examples/builder_example.rs"
+name = "test_placeholder_mapping"
+path = "examples/test_placeholder_mapping.rs"
 
+[[example]]
+name = "placeholder_operations_sqlite"
+path = "examples/placeholder_operations_sqlite.rs"
 
 [features]
 log = []

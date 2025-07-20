@@ -102,6 +102,7 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// - `tp_update`: The main configuration for generating the update function, with the following sub-attributes:
 ///   - `by`: List of columns that will be the update condition, will be the function's input (mandatory and non-empty).
 ///   - `on`: List of columns that will be updated. If empty, all columns will be updated.
+///   - `where`: Additional WHERE clause with placeholder support (see Placeholder Mapping in SelectTemplate).
 ///   - `fn_name`: The name of the generated function. If empty, the library will automatically generate a function name.
 ///   - `op_lock`: The name of the column to apply optimistic locking (optional).
 ///   - `returning`: Can be set to `true` for returning the full record, or specify specific columns (e.g., `returning = "id, email"`).
@@ -172,7 +173,8 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///   - If set to a value greater than `0`: Only logs the query if the execution time exceeds the configured value (in milliseconds).
 ///   - If not configured, no debug logs will be generated.
 /// - `tp_delete`: The main configuration for generating the delete function, with the following sub-attributes:
-///   - `by`: List of columns that will be the delete condition, will be the function's input (mandatory and non-empty).
+///   - `by`: List of columns that will be the delete condition, will be the function's input (can be empty if `where` is provided).
+///   - `where`: Additional WHERE clause with placeholder support (see Placeholder Mapping in SelectTemplate).
 ///   - `fn_name`: The name of the generated function. If empty, the library will automatically generate a function name.
 ///   - `returning`: Can be set to `true` for returning the full record, or specify specific columns (e.g., `returning = "id, email"`).
 ///   - `debug_slow`: Configures debug logs for the executed query:
@@ -252,6 +254,7 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///   - `by`: List of columns for the `WHERE` condition, used as function input (can be empty).
 ///   - `fn_name`: The name of the generated function. If empty, the library will automatically generate a function name.
 ///   - `order`: Adds an `ORDER BY` clause based on the specified columns and order (supports `asc|desc`, default is `asc`).
+///   - `where`: Additional WHERE clause with placeholder support (see Placeholder Mapping section below).
 ///   - `debug_slow`: Configures debug logs for the executed query.
 /// - `tp_select_one`: Similar to `tp_select_all`, but returns a single record as `Option<T>`.
 /// - `tp_select_stream`: Similar to `tp_select_all`, but returns an `impl Stream<Item = T>`.
@@ -260,6 +263,47 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// - `db`: Specifies the target database type (e.g., `#[db("postgres")]`).
 ///
 /// The `debug_slow` attribute at the struct level has priority over the value in `tp_select_*`.
+///
+/// # Placeholder Mapping
+///
+/// The `where` attribute supports advanced placeholder mapping with two main cases:
+///
+/// ## Case 1: Column-Mapped Placeholders
+/// When a placeholder (`:name`) appears in a comparison operation (`=`, `!=`, `<`, `>`, `LIKE`)
+/// and is mapped to a struct field, the parameter type is automatically inferred from the struct field:
+/// ```rust
+/// #[tp_select_all(where = "name = :name and age > :age")]
+/// pub struct User {
+///     pub name: String,  // :name parameter will be &str (String -> &str)
+///     pub age: i32,      // :age parameter will be &i32
+/// }
+/// // Generated: find_all(name: &str, age: &i32, conn: E) -> Result<Vec<User>, sqlx::Error>
+/// ```
+///
+/// ## Case 2: Custom Type Placeholders
+/// Use the format `:name$Type` to specify a custom parameter type:
+/// ```rust
+/// #[tp_select_all(where = "score > :min_score$f64 and created_at > :since$chrono::DateTime<chrono::Utc>")]
+/// pub struct User {
+///     pub score: f64,
+///     pub created_at: chrono::DateTime<chrono::Utc>,
+/// }
+/// // Generated: find_all(min_score: &f64, since: &chrono::DateTime<chrono::Utc>, conn: E) -> Result<Vec<User>, sqlx::Error>
+/// ```
+///
+/// ## Mixed Usage
+/// You can combine both approaches in the same WHERE clause:
+/// ```rust
+/// #[tp_select_all(where = "name = :name and score > :min_score$f64")]
+/// pub struct User {
+///     pub name: String,  // :name mapped to column
+///     pub score: f64,    // :min_score$f64 uses custom type
+/// }
+/// // Generated: find_all(name: &str, min_score: &f64, conn: E) -> Result<Vec<User>, sqlx::Error>
+/// ```
+///
+/// **Note:** Placeholders are only mapped when they appear in direct column comparisons.
+/// Placeholders in expressions like `2 * id > :value` or JSON operations `data -> :key` are not mapped.
 ///
 /// Additionally, the library will automatically generate the following default functions when `SelectTemplate` is derived:
 /// - `find_all`: Returns all records in the table.
@@ -275,8 +319,8 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// #[derive(SelectTemplate, FromRow)]
 /// #[table("users")]
 /// #[tp_select_one(by = "id", fn_name = "find_user_by_id")]
-/// #[tp_select_one(by = "email")]
-/// #[tp_select_all(by = "id, email", order = "id desc")]
+/// #[tp_select_one(by = "email", where = "active = :active")]
+/// #[tp_select_all(by = "id, email", order = "id desc", where = "score > :min_score$f64")]
 /// #[tp_select_count(by = "id, email")]
 /// #[tp_select_page(by = "org", order = "id desc, org desc")]
 /// #[tp_select_stream(order = "id desc")]
@@ -287,6 +331,8 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     pub email: String,
 ///     pub password: String,
 ///     pub org: Option<i32>,
+///     pub active: bool,
+///     pub score: f64,
 /// }
 ///
 /// // Example usage:
@@ -469,6 +515,7 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `tp_upsert`: The main configuration for generating the upsert function, with the following sub-attributes:
 ///   - `conflict`: Specifies the columns that define the conflict condition (mandatory).
 ///   - `update`: List of columns that will be updated on conflict. If empty, all non-conflict columns will be updated.
+///   - `where`: Additional WHERE clause for the ON CONFLICT DO UPDATE with placeholder support (see Placeholder Mapping in SelectTemplate).
 ///   - `fn_name`: The name of the generated function. If empty, the library will automatically generate a function name.
 ///   - `returning`: If set to true, the generated function will return the upserted record (PostgreSQL only).
 ///   - `debug_slow`: Configures debug logs for the executed query (overrides struct-level setting).

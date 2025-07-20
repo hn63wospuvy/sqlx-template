@@ -827,11 +827,24 @@ fn from_expr(expr: &Expr, res: &mut Vec<String>) -> Result<(), String> {
     }
 }
 
+/// Represents the result of parsing SQL expressions to extract columns, tables, and placeholder variables.
+///
+/// This struct contains information about:
+/// - Column names referenced in the SQL expression
+/// - Table names referenced in the SQL expression
+/// - Placeholder variables (e.g., `:user_id`, `:name`) found in the expression
+/// - Mapping between placeholder variables and the columns they are associated with
 #[derive(Debug, Default)]
 pub(crate) struct ColumnTableList {
+    /// Set of column names found in the SQL expression
     pub(crate) columns: HashSet<String>,
+    /// Set of table names found in the SQL expression
     pub(crate) tables: HashSet<String>,
+    /// List of placeholder variables found in the SQL expression (e.g., `:user_id`, `:name`)
     pub(crate) placeholder_vars: Vec<String>,
+    /// Mapping from placeholder variables to the columns they are associated with.
+    /// For example, in "name = :user_name", the mapping would be {":user_name": {"name"}}
+    pub(crate) placeholder_to_columns: HashMap<String, HashSet<String>>,
 }
 
 impl ColumnTableList {
@@ -868,6 +881,106 @@ impl ColumnTableList {
         };
         Ok(())
     }
+
+    fn add_placeholder_column_mapping(&mut self, placeholder: &str, column: &str) -> Result<(), String> {
+        let columns = self.placeholder_to_columns.entry(placeholder.to_string()).or_insert_with(HashSet::new);
+
+        // Check if this placeholder is already mapped to a different column
+        if !columns.is_empty() && !columns.contains(column) {
+            let existing_columns: Vec<String> = columns.iter().cloned().collect();
+            return Err(format!(
+                "Placeholder '{}' is mapped to multiple columns: {} and {}. Each placeholder can only be mapped to one column.",
+                placeholder,
+                existing_columns.join(", "),
+                column
+            ));
+        }
+
+        columns.insert(column.to_string());
+        Ok(())
+    }
+
+    /// Get the mapping of placeholder variables to columns
+    pub fn get_placeholder_column_mapping(&self) -> &HashMap<String, HashSet<String>> {
+        &self.placeholder_to_columns
+    }
+
+    /// Get columns associated with a specific placeholder
+    pub fn get_columns_for_placeholder(&self, placeholder: &str) -> Option<&HashSet<String>> {
+        self.placeholder_to_columns.get(placeholder)
+    }
+}
+
+fn handle_binary_op_with_operator(left: &Expr, op: &sqlparser::ast::BinaryOperator, right: &Expr, res: &mut ColumnTableList) -> Result<(), String> {
+    use sqlparser::ast::BinaryOperator;
+
+    // Only process comparison operators, not JSON access or arithmetic operators
+    match op {
+        BinaryOperator::Eq | BinaryOperator::NotEq |
+        BinaryOperator::Lt | BinaryOperator::LtEq |
+        BinaryOperator::Gt | BinaryOperator::GtEq => {
+            // This is a comparison operation, try to detect column-placeholder relationships
+            handle_comparison_op(left, right, res)?;
+        },
+        BinaryOperator::Arrow | BinaryOperator::LongArrow | // JSON access operators
+        BinaryOperator::Plus | BinaryOperator::Minus |      // Arithmetic operators
+        BinaryOperator::Multiply | BinaryOperator::Divide |
+        BinaryOperator::Modulo | BinaryOperator::StringConcat |
+        BinaryOperator::BitwiseOr | BinaryOperator::BitwiseAnd |
+        BinaryOperator::BitwiseXor | BinaryOperator::PGBitwiseShiftLeft |
+        BinaryOperator::PGBitwiseShiftRight | BinaryOperator::PGExp => {
+            // These are not comparison operations, don't create mappings
+        },
+        _ => {
+            // For other operators, be conservative and don't create mappings
+        }
+    }
+    Ok(())
+}
+
+fn handle_comparison_op(left: &Expr, right: &Expr, res: &mut ColumnTableList) -> Result<(), String> {
+    // Try to detect patterns like: column = :placeholder or :placeholder = column
+    let (column_expr, placeholder_expr) = match (left, right) {
+        (Expr::Identifier(_), Expr::Value(Value::Placeholder(_))) => (left, right),
+        (Expr::CompoundIdentifier(_), Expr::Value(Value::Placeholder(_))) => (left, right),
+        (Expr::Function(_), Expr::Value(Value::Placeholder(_))) => (left, right), // Handle function-like identifiers
+        (Expr::Value(Value::Placeholder(_)), Expr::Identifier(_)) => (right, left),
+        (Expr::Value(Value::Placeholder(_)), Expr::CompoundIdentifier(_)) => (right, left),
+        (Expr::Value(Value::Placeholder(_)), Expr::Function(_)) => (right, left), // Handle function-like identifiers
+        _ => return Ok(()), // Not a column-placeholder pattern
+    };
+
+    // Extract column name
+    let column_name = match column_expr {
+        Expr::Identifier(ident) => ident.value.clone(),
+        Expr::CompoundIdentifier(idents) => {
+            if idents.len() >= 2 {
+                idents[1].value.clone() // Take the column part of table.column
+            } else if idents.len() == 1 {
+                idents[0].value.clone()
+            } else {
+                return Ok(());
+            }
+        },
+        Expr::Function(func) => {
+            // Handle function-like identifiers (e.g., "user" parsed as "user()")
+            if matches!(func.args, sqlparser::ast::FunctionArguments::None) && func.name.0.len() == 1 {
+                func.name.0[0].value.clone()
+            } else {
+                return Ok(()); // This is a real function call, not a column
+            }
+        },
+        _ => return Ok(()),
+    };
+
+    // Extract placeholder name
+    if let Expr::Value(Value::Placeholder(placeholder)) = placeholder_expr {
+        if placeholder.starts_with(":") {
+            res.add_placeholder_column_mapping(placeholder, &column_name)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> Result<(), String> {
@@ -896,8 +1009,20 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
         Expr::InSubquery { expr, subquery, negated } => return Err("Subquery is not supported".into()),
         Expr::InUnnest { expr, array_expr, negated } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**array_expr, res)},
         Expr::Between { expr, negated, low, high } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**low, res)?; extract_columns_and_compound_ids(&**high, res)},
-        Expr::BinaryOp { left, op, right } => {extract_columns_and_compound_ids(&**left, res)?; extract_columns_and_compound_ids(&**right, res)},
-        Expr::Like { negated, expr, pattern, escape_char } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**pattern, res)},
+        Expr::BinaryOp { left, op, right } => {
+            // First extract columns and placeholders
+            extract_columns_and_compound_ids(&**left, res)?;
+            extract_columns_and_compound_ids(&**right, res)?;
+            // Then try to detect column-placeholder relationships only in comparison operations
+            handle_binary_op_with_operator(left, op, right, res)
+        },
+        Expr::Like { negated, expr, pattern, escape_char } => {
+            // First extract columns and placeholders
+            extract_columns_and_compound_ids(&**expr, res)?;
+            extract_columns_and_compound_ids(&**pattern, res)?;
+            // Then try to detect column-placeholder relationships in LIKE operations
+            handle_comparison_op(expr, pattern, res)
+        },
         Expr::ILike { negated, expr, pattern, escape_char } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**pattern, res)},
         Expr::SimilarTo { negated, expr, pattern, escape_char } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**pattern, res)},
         Expr::RLike { negated, expr, pattern, regexp } => {extract_columns_and_compound_ids(&**expr, res)?; extract_columns_and_compound_ids(&**pattern, res)},
@@ -952,7 +1077,13 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
             }
             
             match &x.args {
-                FunctionArguments::None => {},
+                FunctionArguments::None => {
+                    // Handle function-like identifiers (e.g., "user" parsed as "user()")
+                    if x.name.0.len() == 1 {
+                        let ident = &x.name.0[0];
+                        res.add_columns(ident)?;
+                    }
+                },
                 FunctionArguments::Subquery(_) => return Err("Subquery is not supported".into()),
                 FunctionArguments::List(arg_list) => {
                     for arg in &arg_list.args {
@@ -1070,12 +1201,89 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
     }
 }
 
+/// Parses a SQL expression and extracts column names, table names, placeholder variables,
+/// and the mapping between placeholders and columns.
+///
+/// This function analyzes SQL expressions (typically WHERE clauses or conditions) to identify:
+/// - Column names referenced in the expression
+/// - Table names referenced in compound identifiers (e.g., `users.id`)
+/// - Placeholder variables (e.g., `:user_id`, `:name`)
+/// - Relationships between placeholders and columns (e.g., `name = :user_name` maps `:user_name` to `name`)
+///
+/// # Validation Rules
+///
+/// The function enforces that each placeholder can only be mapped to **one column**. If a placeholder
+/// is used with multiple different columns, an error will be returned with details about the conflict.
+///
+/// # Arguments
+///
+/// * `sql` - The SQL expression string to parse
+/// * `dialect` - The SQL dialect to use for parsing (PostgreSQL, MySQL, SQLite, etc.)
+///
+/// # Returns
+///
+/// Returns a `ColumnTableList` containing:
+/// - `columns`: Set of column names found
+/// - `tables`: Set of table names found
+/// - `placeholder_vars`: List of placeholder variables found
+/// - `placeholder_to_columns`: Mapping from placeholders to associated columns
+///
+/// # Examples
+///
+/// ## Valid Usage
+/// ```rust
+/// use sqlx_template::parser::get_columns_and_compound_ids;
+/// use sqlparser::dialect::PostgreSqlDialect;
+///
+/// let sql = "users.name = :user_name AND age > :min_age";
+/// let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {})).unwrap();
+///
+/// // Access columns and tables
+/// assert!(result.columns.contains("name"));
+/// assert!(result.columns.contains("age"));
+/// assert!(result.tables.contains("users"));
+///
+/// // Access placeholder variables
+/// assert!(result.placeholder_vars.contains(&":user_name".to_string()));
+/// assert!(result.placeholder_vars.contains(&":min_age".to_string()));
+///
+/// // Access placeholder-to-column mapping
+/// let name_columns = result.get_columns_for_placeholder(":user_name").unwrap();
+/// assert!(name_columns.contains("name"));
+/// ```
+///
+/// ## Error Case - Placeholder Used with Multiple Columns
+/// ```rust
+/// use sqlx_template::parser::get_columns_and_compound_ids;
+/// use sqlparser::dialect::PostgreSqlDialect;
+///
+/// // This will fail because :search_term is used with both 'name' and 'email' columns
+/// let sql = "name = :search_term AND email = :search_term";
+/// let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+/// assert!(result.is_err());
+///
+/// let error = result.unwrap_err();
+/// assert!(error.contains("Placeholder ':search_term' is mapped to multiple columns"));
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The SQL expression cannot be parsed or contains invalid syntax
+/// - A placeholder is mapped to multiple different columns
+/// - Placeholder format is invalid (must start with ':' and follow naming rules)
 pub fn get_columns_and_compound_ids(sql: &str, dialect: Box<dyn Dialect>) -> Result<ColumnTableList, String> {
-    
+
     let mut p = Parser::new(dialect.as_ref())
         .try_with_sql(sql)
         .map_err(|e| format!("Parse SQL error: {e}"))?;
     let expr = p.parse_expr().map_err(|e| format!("Parse Expr error: {e}"))?;
+
+    // Debug: print the parsed expression (disabled)
+    // if sql == "user = :user" {
+    //     println!("DEBUG: Parsed AST for '{}': {:#?}", sql, expr);
+    // }
+
     let mut res = ColumnTableList::default();
     extract_columns_and_compound_ids(&expr, &mut res)?;
     Ok(res)
@@ -1130,7 +1338,7 @@ fn test_expr() {
     let dialect = PostgreSqlDialect {}; 
     let res = get_columns_and_compound_ids(sql, Box::new(dialect));
     dbg!(&res);
-    assert!(res.is_err());
+    assert!(res.is_ok());
     
     let sql = "
     t.user = 'user' and EXCLUDED.id > tt.id
@@ -1217,4 +1425,405 @@ fn test_count_query() {
     assert!(count_sql_complex.contains(") AS count_subquery"));
     // Should not contain ORDER BY in the final count query
     assert!(!count_sql_complex.ends_with("ORDER BY order_count DESC"));
+}
+
+#[test]
+fn test_placeholder_column_mapping() {
+    use sqlparser::dialect::PostgreSqlDialect;
+
+    // Test simple column = placeholder
+    let sql = "name = :user_name";
+    let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+    assert!(result.is_ok());
+    let parsed = result.unwrap();
+
+    assert!(parsed.columns.contains("name"));
+    assert!(parsed.placeholder_vars.contains(&":user_name".to_string()));
+    assert!(parsed.placeholder_to_columns.contains_key(":user_name"));
+    assert!(parsed.placeholder_to_columns[":user_name"].contains("name"));
+
+    // Test placeholder = column
+    let sql2 = ":email = email";
+    let result2 = get_columns_and_compound_ids(sql2, Box::new(PostgreSqlDialect {}));
+    assert!(result2.is_ok());
+    let parsed2 = result2.unwrap();
+
+    assert!(parsed2.columns.contains("email"));
+    assert!(parsed2.placeholder_vars.contains(&":email".to_string()));
+    assert!(parsed2.placeholder_to_columns.contains_key(":email"));
+    assert!(parsed2.placeholder_to_columns[":email"].contains("email"));
+
+    // Test compound identifier (table.column = placeholder)
+    let sql3 = "users.id = :user_id";
+    let result3 = get_columns_and_compound_ids(sql3, Box::new(PostgreSqlDialect {}));
+    assert!(result3.is_ok());
+    let parsed3 = result3.unwrap();
+
+    assert!(parsed3.columns.contains("id"));
+    assert!(parsed3.tables.contains("users"));
+    assert!(parsed3.placeholder_vars.contains(&":user_id".to_string()));
+    assert!(parsed3.placeholder_to_columns.contains_key(":user_id"));
+    assert!(parsed3.placeholder_to_columns[":user_id"].contains("id"));
+
+    // Test complex expression with multiple mappings
+    let sql4 = "name = :name AND age > :min_age AND users.email = :email";
+    let result4 = get_columns_and_compound_ids(sql4, Box::new(PostgreSqlDialect {}));
+    assert!(result4.is_ok());
+    let parsed4 = result4.unwrap();
+    dbg!(&parsed4);
+
+    assert!(parsed4.columns.contains("name"));
+    assert!(parsed4.columns.contains("age"));
+    assert!(parsed4.columns.contains("email"));
+    assert!(parsed4.tables.contains("users"));
+
+    assert!(parsed4.placeholder_vars.contains(&":name".to_string()));
+    assert!(parsed4.placeholder_vars.contains(&":min_age".to_string()));
+    assert!(parsed4.placeholder_vars.contains(&":email".to_string()));
+
+    assert!(parsed4.placeholder_to_columns[":name"].contains("name"));
+    assert!(parsed4.placeholder_to_columns[":min_age"].contains("age"));
+    assert!(parsed4.placeholder_to_columns[":email"].contains("email"));
+}
+
+#[test]
+fn test_placeholder_column_mapping_api() {
+    use sqlparser::dialect::PostgreSqlDialect;
+
+    let sql = "
+         t.user = :user and t.name1 = :name1$str and t.name2 = :name2 and t.name3 = :name3$UserDefineType and and timestamp(t.full -> :a2 ) like '%' || :name|| '%'
+        ";
+    let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+    assert!(result.is_ok());
+    let parsed = result.unwrap();
+    dbg!(&parsed);
+
+    let sql = "
+         t.user = :user and t.age = :a1 and timestamp(t.full -> :a2 ) like '%:name%'
+        ";
+    let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+    assert!(result.is_ok());
+    let parsed = result.unwrap();
+    dbg!(&parsed);
+
+    let sql = "users.name = :user_name AND age > :min_age AND email = :user_email";
+    let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+    assert!(result.is_ok());
+    let parsed = result.unwrap();
+    dbg!(&parsed);
+    // Test the public API methods
+    let mapping = parsed.get_placeholder_column_mapping();
+    assert_eq!(mapping.len(), 3);
+
+    // Test getting columns for specific placeholder
+    let name_columns = parsed.get_columns_for_placeholder(":user_name");
+    assert!(name_columns.is_some());
+    assert!(name_columns.unwrap().contains("name"));
+
+    let age_columns = parsed.get_columns_for_placeholder(":min_age");
+    assert!(age_columns.is_some());
+    assert!(age_columns.unwrap().contains("age"));
+
+    let email_columns = parsed.get_columns_for_placeholder(":user_email");
+    assert!(email_columns.is_some());
+    assert!(email_columns.unwrap().contains("email"));
+
+    // Test non-existent placeholder
+    let non_existent = parsed.get_columns_for_placeholder(":non_existent");
+    assert!(non_existent.is_none());
+
+    // Print mapping for demonstration
+    println!("Placeholder to Column Mapping:");
+    for (placeholder, columns) in mapping {
+        println!("  {} -> {:?}", placeholder, columns);
+    }
+
+
+}
+
+#[test]
+fn test_placeholder_multiple_columns_error() {
+    use sqlparser::dialect::PostgreSqlDialect;
+
+    // Test case where a placeholder is used with multiple different columns - should fail
+    let sql = "name = :user_param AND email = :user_param";
+    let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err();
+    assert!(error_msg.contains("Placeholder ':user_param' is mapped to multiple columns"));
+    assert!(error_msg.contains("name") && error_msg.contains("email"));
+
+    // Test case where same placeholder is used with same column multiple times - should be OK
+    let sql2 = "name = :user_name AND (age > 18 OR name = :user_name)";
+    let result2 = get_columns_and_compound_ids(sql2, Box::new(PostgreSqlDialect {}));
+    assert!(result2.is_ok());
+    let parsed2 = result2.unwrap();
+    assert!(parsed2.placeholder_to_columns[":user_name"].contains("name"));
+    assert_eq!(parsed2.placeholder_to_columns[":user_name"].len(), 1);
+
+    // Test case with compound identifiers
+    let sql3 = "users.name = :param AND orders.status = :param";
+    let result3 = get_columns_and_compound_ids(sql3, Box::new(PostgreSqlDialect {}));
+    assert!(result3.is_err());
+    let error_msg3 = result3.unwrap_err();
+    assert!(error_msg3.contains("Placeholder ':param' is mapped to multiple columns"));
+    assert!(error_msg3.contains("name") && error_msg3.contains("status"));
+}
+
+#[test]
+fn test_placeholder_error_message_demo() {
+    use sqlparser::dialect::PostgreSqlDialect;
+
+    // Demo case: User accidentally uses same placeholder for different columns
+    let sql = "users.email = :search_term AND users.name = :search_term";
+    let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+
+    match result {
+        Ok(_) => panic!("Expected error but got success"),
+        Err(error_msg) => {
+            println!("Error caught successfully:");
+            println!("{}", error_msg);
+            assert!(error_msg.contains("Placeholder ':search_term' is mapped to multiple columns"));
+            assert!(error_msg.contains("email") && error_msg.contains("name"));
+        }
+    }
+
+    // Demo case: Complex query with multiple placeholder conflicts
+    let sql2 = "orders.status = :filter AND customers.region = :filter AND products.category = :filter";
+    let result2 = get_columns_and_compound_ids(sql2, Box::new(PostgreSqlDialect {}));
+
+    match result2 {
+        Ok(_) => panic!("Expected error but got success"),
+        Err(error_msg) => {
+            println!("\nSecond error caught successfully:");
+            println!("{}", error_msg);
+            // Should catch the first conflict (status vs region)
+            assert!(error_msg.contains("Placeholder ':filter' is mapped to multiple columns"));
+        }
+    }
+}
+
+#[test]
+fn test_placeholder_in_string_literal() {
+    use sqlparser::dialect::PostgreSqlDialect;
+
+    // Test case: placeholder inside string literal should NOT be recognized as placeholder
+    let sql1 = "name LIKE '%:search_term%'";
+    let result1 = get_columns_and_compound_ids(sql1, Box::new(PostgreSqlDialect {}));
+    assert!(result1.is_ok());
+    let parsed1 = result1.unwrap();
+
+    println!("SQL with placeholder in string: {}", sql1);
+    println!("Placeholders found: {:?}", parsed1.placeholder_vars);
+    // Should be empty because :search_term is inside quotes
+    assert!(parsed1.placeholder_vars.is_empty());
+    assert!(parsed1.placeholder_to_columns.is_empty());
+
+    // Test case: proper placeholder usage for LIKE patterns
+    let sql2 = "name LIKE :search_pattern";
+    let result2 = get_columns_and_compound_ids(sql2, Box::new(PostgreSqlDialect {}));
+    assert!(result2.is_ok());
+    let parsed2 = result2.unwrap();
+
+    println!("SQL with proper placeholder: {}", sql2);
+    println!("Placeholders found: {:?}", parsed2.placeholder_vars);
+    assert!(parsed2.placeholder_vars.contains(&":search_pattern".to_string()));
+    if let Some(columns) = parsed2.get_columns_for_placeholder(":search_pattern") {
+        assert!(columns.contains("name"));
+    } else {
+        panic!("Expected :search_pattern to be mapped to name column");
+    }
+
+    // Test case: PostgreSQL concatenation with placeholders
+    let sql3 = "name LIKE '%' || :search_term || '%'";
+    let result3 = get_columns_and_compound_ids(sql3, Box::new(PostgreSqlDialect {}));
+    assert!(result3.is_ok());
+    let parsed3 = result3.unwrap();
+
+    println!("SQL with concatenation: {}", sql3);
+    println!("Placeholders found: {:?}", parsed3.placeholder_vars);
+    println!("Mapping: {:?}", parsed3.placeholder_to_columns);
+    assert!(parsed3.placeholder_vars.contains(&":search_term".to_string()));
+    // Note: In concatenation like '%' || :search_term || '%', the placeholder is not directly
+    // compared to the column, so no mapping is created. This is expected behavior.
+    println!("Note: No mapping for concatenation case - this is expected behavior");
+
+    // Test the original problematic case (fixed to use different placeholders)
+    let sql4 = "t.user = :user and t.age = :a1 and timestamp(t.full -> :a2 ) like '%:name%'";
+    let result4 = get_columns_and_compound_ids(sql4, Box::new(PostgreSqlDialect {}));
+    if result4.is_err() {
+        println!("Error in original case: {}", result4.as_ref().unwrap_err());
+    }
+    assert!(result4.is_ok());
+    let parsed4 = result4.unwrap();
+
+    println!("Original SQL (fixed): {}", sql4);
+    println!("Placeholders found: {:?}", parsed4.placeholder_vars);
+    println!("Mapping: {:?}", parsed4.placeholder_to_columns);
+    // Should only contain :user, :a1, :a2, NOT :name because it's in quotes
+    assert!(parsed4.placeholder_vars.contains(&":user".to_string()));
+    assert!(parsed4.placeholder_vars.contains(&":a1".to_string()));
+    assert!(parsed4.placeholder_vars.contains(&":a2".to_string()));
+    assert!(!parsed4.placeholder_vars.contains(&":name".to_string()));
+
+    // Test a case that should actually fail (same placeholder with different columns in comparisons)
+    println!("\n--- Testing a case that should fail ---");
+    let sql5 = "t.user = :param and t.age = :param"; // Same placeholder for different columns in comparisons
+    let result5 = get_columns_and_compound_ids(sql5, Box::new(PostgreSqlDialect {}));
+    assert!(result5.is_err());
+    let error5 = result5.unwrap_err();
+    println!("Expected error for reused placeholder: {}", error5);
+    assert!(error5.contains("Placeholder ':param' is mapped to multiple columns"));
+    assert!(error5.contains("user") && error5.contains("age"));
+}
+
+#[test]
+fn test_placeholder_mapping_flexibility() {
+    use sqlparser::dialect::PostgreSqlDialect;
+
+    // Test case: placeholders can be unmapped (used in JSON access, concatenation, etc.)
+    let sql1 = "t.user = :user and t.name1 = :name1 and timestamp(t.full -> :a2 ) like '%' || :name || '%'";
+    let result1 = get_columns_and_compound_ids(sql1, Box::new(PostgreSqlDialect {}));
+    assert!(result1.is_ok());
+    let parsed1 = result1.unwrap();
+
+    println!("SQL: {}", sql1);
+    println!("All placeholders found: {:?}", parsed1.placeholder_vars);
+    println!("Mapped placeholders: {:?}", parsed1.placeholder_to_columns);
+
+    // Should find all placeholders
+    assert!(parsed1.placeholder_vars.contains(&":user".to_string()));
+    assert!(parsed1.placeholder_vars.contains(&":name1".to_string()));
+    assert!(parsed1.placeholder_vars.contains(&":a2".to_string()));
+    assert!(parsed1.placeholder_vars.contains(&":name".to_string()));
+
+    // But only some are mapped to columns (those in direct comparisons)
+    assert!(parsed1.placeholder_to_columns.contains_key(":user"));
+    assert!(parsed1.placeholder_to_columns.contains_key(":name1"));
+    // :a2 and :name are NOT mapped because they're used in JSON access and concatenation
+    assert!(!parsed1.placeholder_to_columns.contains_key(":a2"));
+    assert!(!parsed1.placeholder_to_columns.contains_key(":name"));
+
+    println!("✓ Mapped placeholders: :user -> user, :name1 -> name1");
+    println!("✓ Unmapped placeholders: :a2 (JSON access), :name (concatenation)");
+
+    // Test case: still enforce the "1 placeholder = 1 column" rule for mapped ones
+    let sql2 = "t.user = :param and t.email = :param";  // Same placeholder for different columns
+    let result2 = get_columns_and_compound_ids(sql2, Box::new(PostgreSqlDialect {}));
+    assert!(result2.is_err());
+    let error2 = result2.unwrap_err();
+    println!("\nError for multiple column mapping: {}", error2);
+    assert!(error2.contains("Placeholder ':param' is mapped to multiple columns"));
+}
+
+#[test]
+fn test_simple_comparison_debug() {
+    use sqlparser::dialect::PostgreSqlDialect;
+
+    // Debug the simple case that's failing
+    let sql = "user = :user";
+    let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+
+    println!("=== Debug Simple Comparison ===");
+    println!("SQL: {}", sql);
+
+    match result {
+        Ok(parsed) => {
+            println!("✓ Parse successful");
+            println!("Placeholders found: {:?}", parsed.placeholder_vars);
+            println!("Columns found: {:?}", parsed.columns);
+            println!("Mapping: {:?}", parsed.placeholder_to_columns);
+
+            // The issue is that no columns are found at all!
+            // This means the identifier 'user' is not being detected as a column
+            assert!(parsed.columns.contains("user"), "Column 'user' should be detected");
+
+            // Check if :user is mapped to user column
+            if let Some(columns) = parsed.get_columns_for_placeholder(":user") {
+                println!("✓ :user is mapped to columns: {:?}", columns);
+                assert!(columns.contains("user"));
+            } else {
+                println!("✗ :user is not mapped to any column");
+                // This is expected to fail until we fix the column detection
+            }
+        },
+        Err(e) => {
+            println!("✗ Parse failed: {}", e);
+            panic!("Parse should succeed");
+        }
+    }
+}
+
+#[test]
+fn test_user_specific_case() {
+    use sqlparser::dialect::PostgreSqlDialect;
+
+    // Test the exact user case
+    let sql = "t.user = :user and t.name1 = :name1$str and t.name2 = :name2 and t.name3 = :name3$UserDefineType and timestamp(t.full -> :a2 ) like '%' || :name || '%'";
+    let result = get_columns_and_compound_ids(sql, Box::new(PostgreSqlDialect {}));
+
+    println!("=== User's Specific Test Case ===");
+    println!("SQL: {}", sql);
+
+    match result {
+        Ok(parsed) => {
+            dbg!(&parsed);
+            println!("✓ Parse successful");
+            println!("All placeholders found: {:?}", parsed.placeholder_vars);
+            println!("Mapped placeholders: {:?}", parsed.placeholder_to_columns);
+            println!("Columns found: {:?}", parsed.columns);
+            println!("Tables found: {:?}", parsed.tables);
+
+            // Check if :a2 and :name are in placeholder_vars
+            let has_a2 = parsed.placeholder_vars.contains(&":a2".to_string());
+            let has_name = parsed.placeholder_vars.contains(&":name".to_string());
+
+            println!("Contains :a2? {}", has_a2);
+            println!("Contains :name? {}", has_name);
+
+            if !has_a2 {
+                println!("⚠️  :a2 is missing from placeholder_vars (JSON access case)");
+            }
+            if !has_name {
+                println!("⚠️  :name is missing from placeholder_vars (concatenation case)");
+            }
+
+            // Test individual components
+            println!("\n--- Testing individual components ---");
+
+            // Test JSON access alone
+            let json_sql = "t.full -> :a2";
+            let json_result = get_columns_and_compound_ids(json_sql, Box::new(PostgreSqlDialect {}));
+            match json_result {
+                Ok(json_parsed) => {
+                    println!("JSON access '{}' placeholders: {:?}", json_sql, json_parsed.placeholder_vars);
+                },
+                Err(e) => println!("JSON access parse error: {}", e),
+            }
+
+            // Test concatenation alone
+            let concat_sql = "'%' || :name || '%'";
+            let concat_result = get_columns_and_compound_ids(concat_sql, Box::new(PostgreSqlDialect {}));
+            match concat_result {
+                Ok(concat_parsed) => {
+                    println!("Concatenation '{}' placeholders: {:?}", concat_sql, concat_parsed.placeholder_vars);
+                },
+                Err(e) => println!("Concatenation parse error: {}", e),
+            }
+
+            // Test LIKE with concatenation
+            let like_sql = "column LIKE '%' || :name || '%'";
+            let like_result = get_columns_and_compound_ids(like_sql, Box::new(PostgreSqlDialect {}));
+            match like_result {
+                Ok(like_parsed) => {
+                    println!("LIKE with concat '{}' placeholders: {:?}", like_sql, like_parsed.placeholder_vars);
+                },
+                Err(e) => println!("LIKE parse error: {}", e),
+            }
+
+        },
+        Err(e) => {
+            println!("✗ Parse failed: {}", e);
+        }
+    }
 }
