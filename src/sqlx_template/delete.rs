@@ -336,7 +336,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
 
     // Check for tp_delete_builder attribute and generate builder if present
     let builder_code = if super::has_attribute(ast, "tp_delete_builder") {
-        let config = super::builder::BuilderConfig::from_existing_attributes(ast)?;
+        let config = super::builder::BuilderConfig::from_existing_attributes(ast, db)?;
         Some(super::builder::macro_impl::impl_delete_builder(ast, &config))
     } else {
         None

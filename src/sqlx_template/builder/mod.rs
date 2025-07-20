@@ -178,9 +178,8 @@ impl BuilderConfig {
 
     
 
-    pub fn from_existing_attributes(ast: &DeriveInput) -> Result<Self, syn::Error> {
-        let database = super::get_database_from_ast(ast);
-        Ok(Self::from_ast(ast, database))
+    pub fn from_existing_attributes(ast: &DeriveInput, db: Database) -> Result<Self, syn::Error> {
+        Ok(Self::from_ast(ast, db))
     }
 }
 

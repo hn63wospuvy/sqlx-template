@@ -147,7 +147,7 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// This macro relies on `sqlx`, so you need to add `sqlx` to your `[dependencies]` in `Cargo.toml`
 /// and properly configure the database connection before using the generated update methods.
 
-#[proc_macro_derive(UpdateTemplate, attributes(table, tp_update, tp_update_builder, debug_slow, db))]
+#[proc_macro_derive(UpdateTemplate, attributes(table, tp_update, tp_update_builder, debug_slow, db, tp_update_builder))]
 pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::update::derive_update(&input, None, sqlx_template::Scope::Struct, None) {
@@ -225,7 +225,7 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated delete methods.
 ///
 
-#[proc_macro_derive(DeleteTemplate, attributes(table, tp_delete, tp_delete_builder, debug_slow, db))]
+#[proc_macro_derive(DeleteTemplate, attributes(table, tp_delete, tp_delete_builder, debug_slow, db, tp_delete_builder))]
 pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::delete::derive_delete(&input, None, sqlx_template::Scope::Struct, None) {
@@ -327,7 +327,7 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated query methods.
 ///
 
-#[proc_macro_derive(SelectTemplate, attributes(table, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_select_builder, db))]
+#[proc_macro_derive(SelectTemplate, attributes(table, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_select_builder, db, tp_select_builder))]
 pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::select::derive_select(&input, None, sqlx_template::Scope::Struct, None) {
@@ -667,7 +667,7 @@ pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// This macro is specifically designed for PostgreSQL and may not work with other databases.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(PostgresTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+#[proc_macro_derive(PostgresTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder))]
 pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Postgres)) {
@@ -730,7 +730,7 @@ pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 /// This macro is specifically designed for MySQL and generates MySQL-compatible SQL syntax.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(MysqlTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+#[proc_macro_derive(MysqlTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder))]
 pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Mysql)) {
@@ -793,7 +793,7 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// This macro is specifically designed for SQLite and generates SQLite-compatible SQL syntax.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(SqliteTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+#[proc_macro_derive(SqliteTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder))]
 pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Sqlite)) {
@@ -1709,145 +1709,4 @@ pub fn sqlite_delete(args: TokenStream, item: TokenStream) -> proc_macro::TokenS
 
 
 
-
-
-
-/// Generate type-safe select builder with fluent API
-///
-/// This macro generates a builder pattern for SELECT queries with type-safe methods
-/// based on field types. Use with existing derive macros and attributes:
-///
-/// # Example
-///
-/// ```rust
-/// #[derive(SqliteTemplate, FromRow, Debug, Clone)]
-/// #[table("users")]
-/// #[tp_select_builder]
-/// struct User {
-///     id: i32,
-///     email: String,
-///     created_at: chrono::DateTime<chrono::Utc>,
-/// }
-///
-/// // Usage:
-/// let user = User::builder_select()
-///     .email("test@example.com")
-///     .created_at_gt(yesterday)
-///     .order_by_id_desc()
-///     .find_one(&pool)
-///     .await?;
-/// ```
-#[proc_macro_attribute]
-pub fn tp_select_builder(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-
-    // Parse existing attributes to get database and table info
-    let config = match sqlx_template::builder::BuilderConfig::from_existing_attributes(&input) {
-        Ok(config) => config,
-        Err(err) => return err.to_compile_error().into(),
-    };
-
-    // Generate the select builder
-    let builder_impl = sqlx_template::builder::macro_impl::impl_select_builder(&input, &config);
-
-    let output = quote! {
-        #input
-        #builder_impl
-    };
-
-    output.into()
-}
-
-/// Generate type-safe update builder with fluent API
-///
-/// This macro generates a builder pattern for UPDATE queries with type-safe methods.
-/// Use with existing derive macros and attributes:
-///
-/// # Example
-///
-/// ```rust
-/// #[derive(SqlxTemplate, FromRow, Debug, Clone)]
-/// #[table("users")]
-/// #[db("sqlite")]
-/// #[tp_update_builder]
-/// struct User {
-///     id: i32,
-///     email: String,
-///     password: String,
-/// }
-///
-/// // Usage:
-/// let affected_rows = User::builder_update()
-///     .on_email("new@example.com")
-///     .on_password("new_password")
-///     .by_id(123)
-///     .execute(&pool)
-///     .await?;
-/// ```
-#[proc_macro_attribute]
-pub fn tp_update_builder(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-
-    // Parse existing attributes to get database and table info
-    let config = match sqlx_template::builder::BuilderConfig::from_existing_attributes(&input) {
-        Ok(config) => config,
-        Err(err) => return err.to_compile_error().into(),
-    };
-
-    // Generate the update builder
-    let builder_impl = sqlx_template::builder::macro_impl::impl_update_builder(&input, &config);
-
-    let output = quote! {
-        #input
-        #builder_impl
-    };
-
-    output.into()
-}
-
-/// Generate type-safe delete builder with fluent API
-///
-/// This macro generates a builder pattern for DELETE queries with type-safe methods.
-/// Use with existing derive macros and attributes:
-///
-/// # Example
-///
-/// ```rust
-/// #[derive(SqlxTemplate, FromRow, Debug, Clone)]
-/// #[table("users")]
-/// #[db("sqlite")]
-/// #[tp_delete_builder]
-/// struct User {
-///     id: i32,
-///     email: String,
-///     created_at: chrono::DateTime<chrono::Utc>,
-/// }
-///
-/// // Usage:
-/// let affected_rows = User::builder_delete()
-///     .email_end_with("@old-domain.com")
-///     .created_at_lt(cutoff_date)
-///     .execute(&pool)
-///     .await?;
-/// ```
-#[proc_macro_attribute]
-pub fn tp_delete_builder(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-
-    // Parse existing attributes to get database and table info
-    let config = match sqlx_template::builder::BuilderConfig::from_existing_attributes(&input) {
-        Ok(config) => config,
-        Err(err) => return err.to_compile_error().into(),
-    };
-
-    // Generate the delete builder
-    let builder_impl = sqlx_template::builder::macro_impl::impl_delete_builder(&input, &config);
-
-    let output = quote! {
-        #input
-        #builder_impl
-    };
-
-    output.into()
-}
 

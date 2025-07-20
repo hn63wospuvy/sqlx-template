@@ -169,15 +169,7 @@ pub fn get_table_name(ast: &DeriveInput) -> String {
 }
 
 pub fn get_database_from_ast(ast: &DeriveInput) -> Database {
-    if cfg!(feature = "postgres") {
-        return Database::Postgres;
-    } else if cfg!(feature = "sqlite") {
-        return Database::Sqlite;
-    } else if cfg!(feature = "mysql") {
-        return Database::Mysql;
-    } else if cfg!(feature = "any") {
-        return Database::Any;
-    }
+
     let mut res = None;
     ast.attrs.iter()
         .filter(|attr| attr.path.is_ident("db"))
@@ -200,15 +192,7 @@ pub fn get_database_from_ast(ast: &DeriveInput) -> Database {
 }
 
 pub fn get_database_from_input_fn(input: &ItemFn) -> Database {
-    if cfg!(feature = "postgres") {
-        return Database::Postgres;
-    } else if cfg!(feature = "sqlite") {
-        return Database::Sqlite;
-    } else if cfg!(feature = "mysql") {
-        return Database::Mysql;
-    } else if cfg!(feature = "any") {
-        return Database::Any;
-    }
+
     let mut res = None;
     input.attrs.iter()
         .filter(|attr| attr.path.is_ident("db"))
