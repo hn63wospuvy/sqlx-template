@@ -112,6 +112,9 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     - If not configured, no debug logs will be generated.
 /// - `debug_slow`: Configures debug logs for the executed query, with priority given to the value in `tp_update`.
 /// - `db`: Specifies the target database type (e.g., `#[db("postgres")]`).
+/// - `tp_update_builder`: Builder pattern configuration for UPDATE operations with custom WHERE conditions.
+///
+#[doc = include_str!("../docs/builder_pattern.md")]
 ///
 /// # Example
 ///
@@ -120,27 +123,32 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// #[derive(UpdateTemplate, sqlx::FromRow)]
 /// #[table("users")]
+/// #[db("sqlite")]
 /// #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
 /// #[tp_update(by = "id", on = "email, password", fn_name = "update_user_password")]
-/// #[tp_update(by = "id", fn_name = "update_user_returning", returning = true)]
-/// #[tp_update(by = "id", fn_name = "update_user_returning_id", returning = "id")]
-/// #[debug_slow = 1000]
-/// #[db("postgres")]
+/// #[tp_update_builder(
+///     with_high_score = "score > :threshold$i32"
+/// )]
 /// pub struct User {
 ///     pub id: i32,
 ///     pub email: String,
 ///     pub password: String,
+///     pub score: i32,
 ///     pub version: i32
 /// }
-/// ```
 ///
-/// In the example above:
-/// - `table` is set to "users", specifying the table to update.
-/// - The first `tp_update` generates a function named `update_user` to update record, using `id` as the condition and applying optimistic locking on the `version` column.
-/// - The second `tp_update` generates a function named `update_user_password` to update both `email` and `password` columns, using `id` as the condition.
-/// - The third `tp_update` generates a function that returns the full updated record.
-/// - The fourth `tp_update` generates a function that returns only the `id` column of the updated record.
-/// - `debug_slow` is set to 1000 milliseconds, meaning only queries taking longer than 1 second will be logged for debugging.
+/// // Traditional update:
+/// User::update_user(&user, &pool).await?;
+///
+/// // Builder pattern update:
+/// let affected = User::builder_update()
+///     .on_email("newemail@example.com")?
+///     .on_score(&95)?
+///     .by_id(&user_id)?
+///     .with_high_score(80)?
+///     .execute(&pool)
+///     .await?;
+/// ```
 ///
 
 /// # Note
@@ -182,8 +190,9 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     - If set to a value greater than `0`: Only logs the query if the execution time exceeds the configured value (in milliseconds).
 ///     - If not configured, no debug logs will be generated.
 /// - `db`: Specifies the target database type (e.g., `#[db("postgres")]`).
+/// - `tp_delete_builder`: Builder pattern configuration for DELETE operations with custom WHERE conditions.
 ///
-/// The `debug_slow` attribute at the struct level has priority over the value in `tp_delete`.
+#[doc = include_str!("../docs/builder_pattern.md")]
 ///
 /// # Example
 ///
@@ -192,34 +201,29 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// #[derive(DeleteTemplate, sqlx::FromRow)]
 /// #[table("users")]
+/// #[db("sqlite")]
 /// #[tp_delete(by = "id", fn_name = "delete_user", returning = true)]
 /// #[tp_delete(by = "id")]
-/// #[tp_delete(by = "id, email")]
-/// #[db("postgres")]
+/// #[tp_delete_builder(
+///     with_old_accounts = "created_at < :cutoff_date$String"
+/// )]
 /// pub struct User {
 ///     pub id: i32,
 ///     pub email: String,
 ///     pub password: String,
+///     pub created_at: String,
 /// }
 ///
-/// // Delete a user record by id
-/// let user = User { id: 1, email: "john.doe@example.com".to_string(), password: "password123".to_string() };
+/// // Traditional delete:
 /// let rows_affected = User::delete_by_id(&user.id, &pool).await?;
-/// println!("Rows affected: {}", rows_affected);
 ///
-/// // With returning enabled (PostgreSQL)
-/// let deleted_user = User::delete_user(&user.id, &pool).await?;
-/// println!("Deleted user: {:?}", deleted_user);
-///
-/// // Delete by multiple columns
-/// let rows_affected = User::delete_by_id_and_email(&user.id, &user.email, &pool).await?;
+/// // Builder pattern delete:
+/// let deleted = User::builder_delete()
+///     .active(&false)?
+///     .with_old_accounts("2023-01-01")?
+///     .execute(&pool)
+///     .await?;
 /// ```
-///
-/// In the example above:
-/// - `table` is set to "users", specifying the table to delete from.
-/// - The first `tp_delete` generates a function named `delete_user` to delete a record based on the `id` column and return the deleted record.
-/// - The second `tp_delete` generates a function named `delete_by_id` to delete a record based on the `id` column.
-/// - The third `tp_delete` generates a function named `delete_by_id_and_email` to delete a record based on both `id` and `email` columns.
 ///
 /// # Note
 ///
@@ -261,8 +265,11 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// - `tp_select_count`: Similar to `tp_select_all`, but returns the count of records as `i64`.
 /// - `tp_select_page`: Similar to `tp_select_all`, but accepts pagination parameters and returns a tuple of all records and the total count.
 /// - `db`: Specifies the target database type (e.g., `#[db("postgres")]`).
+/// - `tp_select_builder`: Builder pattern configuration for SELECT operations with custom WHERE conditions.
 ///
 /// The `debug_slow` attribute at the struct level has priority over the value in `tp_select_*`.
+///
+#[doc = include_str!("../docs/builder_pattern.md")]
 ///
 /// # Placeholder Mapping
 ///
@@ -324,6 +331,10 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// #[tp_select_count(by = "id, email")]
 /// #[tp_select_page(by = "org", order = "id desc, org desc")]
 /// #[tp_select_stream(order = "id desc")]
+/// #[tp_select_builder(
+///     with_email_domain = "email LIKE :domain$String",
+///     with_score_range = "score BETWEEN :min$f64 AND :max$f64"
+/// )]
 /// #[debug_slow = 1000]
 /// pub struct User {
 ///     #[auto]
@@ -358,6 +369,16 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// while let Some(Ok(user)) = user_stream.next().await {
 ///     println!("Streamed user: {:?}", user);
 /// }
+///
+/// // Builder pattern queries
+/// let users = User::builder_select()
+///     .email("john@example.com")?
+///     .active(&true)?
+///     .with_email_domain("%@company.com")?
+///     .with_score_range(&60.0, &90.0)?
+///     .order_by_score_desc()?
+///     .find_all(&pool)
+///     .await?;
 /// ```
 ///
 /// In the example above:
@@ -606,7 +627,10 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// - `tp_update`: Update operation configurations.
 /// - `tp_delete`: Delete operation configurations.
 /// - `tp_upsert`: Upsert operation configurations.
+/// - `tp_select_builder`, `tp_update_builder`, `tp_delete_builder`: Builder pattern configurations.
 /// - `db`: Specifies the target database type.
+///
+#[doc = include_str!("../docs/builder_pattern.md")]
 ///
 /// # Generated Functions
 ///
@@ -677,6 +701,9 @@ pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `tp_update`: Update operation configurations.
 /// - `tp_delete`: Delete operation configurations.
 /// - `tp_upsert`: Upsert operation configurations.
+/// - `tp_select_builder`, `tp_update_builder`, `tp_delete_builder`: Builder pattern configurations.
+///
+#[doc = include_str!("../docs/builder_pattern.md")]
 ///
 /// # PostgreSQL-Specific Features
 ///
@@ -739,6 +766,9 @@ pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 /// - `tp_update`: Update operation configurations.
 /// - `tp_delete`: Delete operation configurations.
 /// - `tp_upsert`: Upsert operation configurations.
+/// - `tp_select_builder`, `tp_update_builder`, `tp_delete_builder`: Builder pattern configurations.
+///
+#[doc = include_str!("../docs/builder_pattern.md")]
 ///
 /// # MySQL-Specific Features
 ///
@@ -802,6 +832,11 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `tp_update`: Update operation configurations.
 /// - `tp_delete`: Delete operation configurations.
 /// - `tp_upsert`: Upsert operation configurations.
+/// - `tp_select_builder`: Builder pattern configuration for SELECT operations.
+/// - `tp_update_builder`: Builder pattern configuration for UPDATE operations.
+/// - `tp_delete_builder`: Builder pattern configuration for DELETE operations.
+///
+#[doc = include_str!("../docs/builder_pattern.md")]
 ///
 /// # SQLite-Specific Features
 ///
@@ -810,6 +845,7 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - Upsert operations using SQLite's INSERT ... ON CONFLICT syntax
 /// - Proper handling of SQLite's ROWID and auto-increment columns
 /// - SQLite-compatible LIMIT and OFFSET syntax for pagination
+/// - Builder pattern with compile-time optimized SQL generation
 ///
 /// # Example
 ///
@@ -818,6 +854,10 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// #[derive(SqliteTemplate, sqlx::FromRow)]
 /// #[table("users")]
+/// #[tp_select_builder(
+///     with_email_domain = "email LIKE :domain$String",
+///     with_score_range = "score BETWEEN :min$i32 AND :max$i32"
+/// )]
 /// #[tp_update(by = "id")]
 /// #[tp_delete(by = "id")]
 /// #[tp_upsert(by = "email", update = "password")]
@@ -826,13 +866,24 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///     pub id: i32,
 ///     pub email: String,
 ///     pub password: String,
+///     pub score: i32,
+///     pub active: bool,
 /// }
 ///
-/// // SQLite-optimized operations:
+/// // Traditional operations:
 /// // User::insert(&user, &pool).await?;
 /// // User::update_by_id(&user, &pool).await?;
 /// // User::delete_by_id(&1, &pool).await?;
 /// // User::upsert_by_email(&user, &pool).await?;
+///
+/// // Builder pattern operations:
+/// let users = User::builder_select()
+///     .email("john@example.com")?
+///     .active(&true)?
+///     .with_email_domain("%@company.com")?
+///     .order_by_score_desc()?
+///     .find_all(&pool)
+///     .await?;
 /// ```
 ///
 /// # Note
@@ -864,6 +915,9 @@ pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// - `tp_update`: Update operation configurations.
 /// - `tp_delete`: Delete operation configurations.
 /// - `tp_upsert`: Upsert operation configurations.
+/// - `tp_select_builder`, `tp_update_builder`, `tp_delete_builder`: Builder pattern configurations.
+///
+#[doc = include_str!("../docs/builder_pattern.md")]
 ///
 /// # Database Compatibility Features
 ///

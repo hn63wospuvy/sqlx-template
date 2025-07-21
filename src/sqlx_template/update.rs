@@ -810,7 +810,7 @@ pub fn derive_update(
 
     // Check for tp_update_builder attribute and generate builder if present
     let builder_code = if super::has_attribute(ast, "tp_update_builder") {
-        let config = super::builder::BuilderConfig::from_existing_attributes(ast, db)?;
+        let config = super::builder::BuilderConfig::from_update_attributes(ast, db)?;
         Some(super::builder::macro_impl::impl_update_builder(ast, &config))
     } else {
         None

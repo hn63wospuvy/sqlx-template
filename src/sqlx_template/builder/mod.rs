@@ -193,13 +193,31 @@ impl BuilderConfig {
         let mut config = Self::from_ast(ast, db);
 
         // Parse custom conditions from tp_select_builder attributes
-        config.custom_conditions = Self::parse_custom_conditions(ast, &config.fields, db)?;
+        config.custom_conditions = Self::parse_custom_conditions(ast, &config.fields, db, "tp_select_builder")?;
 
         Ok(config)
     }
 
-    /// Parse custom conditions from tp_select_builder attributes
-    fn parse_custom_conditions(ast: &DeriveInput, fields: &[Field], db: Database) -> Result<Vec<CustomCondition>, syn::Error> {
+    pub fn from_update_attributes(ast: &DeriveInput, db: Database) -> Result<Self, syn::Error> {
+        let mut config = Self::from_ast(ast, db);
+
+        // Parse custom conditions from tp_update_builder attributes
+        config.custom_conditions = Self::parse_custom_conditions(ast, &config.fields, db, "tp_update_builder")?;
+
+        Ok(config)
+    }
+
+    pub fn from_delete_attributes(ast: &DeriveInput, db: Database) -> Result<Self, syn::Error> {
+        let mut config = Self::from_ast(ast, db);
+
+        // Parse custom conditions from tp_delete_builder attributes
+        config.custom_conditions = Self::parse_custom_conditions(ast, &config.fields, db, "tp_delete_builder")?;
+
+        Ok(config)
+    }
+
+    /// Parse custom conditions from builder attributes
+    fn parse_custom_conditions(ast: &DeriveInput, fields: &[Field], db: Database, attr_name: &str) -> Result<Vec<CustomCondition>, syn::Error> {
         use syn::{Meta, NestedMeta, Lit};
 
         let mut custom_conditions = Vec::new();
@@ -212,7 +230,7 @@ impl BuilderConfig {
 
         for attr in &ast.attrs {
             if let Ok(Meta::List(meta_list)) = attr.parse_meta() {
-                if meta_list.path.is_ident("tp_select_builder") {
+                if meta_list.path.is_ident(attr_name) {
                     for nested in &meta_list.nested {
                         if let NestedMeta::Meta(Meta::NameValue(name_value)) = nested {
                             let method_name = name_value.path.get_ident()
@@ -249,35 +267,43 @@ impl BuilderConfig {
         field_names: &HashSet<String>,
         db: Database
     ) -> Result<(Vec<String>, Vec<String>), syn::Error> {
-        // // For now, use a simple regex-based approach to extract placeholders
-        // // This avoids the parsing issues during macro compilation
-        // let placeholder_regex = regex::Regex::new(r":(\w+)").unwrap();
-        // let placeholders: Vec<String> = placeholder_regex
-        //     .captures_iter(sql_expr)
-        //     .map(|cap| cap[1].to_string())
-        //     .collect();
+        use crate::parser;
 
-        // // Extract column names using a simple regex approach
-        // // This is a simplified approach - we'll extract identifiers that look like column names
-        // let column_regex = regex::Regex::new(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b").unwrap();
-        // let mut columns = Vec::new();
+        // Use existing parser to get columns and placeholders
+        let par_res = parser::get_columns_and_compound_ids(
+            sql_expr,
+            super::get_database_dialect(db),
+        ).map_err(|e| syn::Error::new(proc_macro2::Span::call_site(), format!("Failed to parse SQL expression: {}", e)))?;
 
-        // for cap in column_regex.captures_iter(sql_expr) {
-        //     let word = &cap[1];
-        //     // Skip SQL keywords and placeholders
-        //     if !Self::is_sql_keyword(word) && !placeholders.contains(&word.to_string()) {
-        //         if field_names.contains(word) {
-        //             columns.push(word.to_string());
-        //         }
-        //     }
-        // }
+        let mut columns = Vec::new();
+        let mut parameters = Vec::new();
 
-        // // Remove duplicates
-        // columns.sort();
-        // columns.dedup();
+        // Validate columns exist in struct fields
+        for col in &par_res.columns {
+            let normalized_col = super::check_column_name(col.clone(), db);
+            if !field_names.contains(&normalized_col) {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    format!("Column '{}' in custom condition not found in struct fields", col)
+                ));
+            }
+            columns.push(normalized_col);
+        }
 
-        // Ok((columns, placeholders))
-        todo!()
+        // Extract parameters from placeholders
+        for placeholder in &par_res.placeholder_vars {
+            if let Some(name) = placeholder.strip_prefix(':') {
+                // Handle both :name and :name$Type formats
+                let param_name = if let Some(dollar_pos) = name.find('$') {
+                    name[..dollar_pos].to_string()
+                } else {
+                    name.to_string()
+                };
+                parameters.push(param_name);
+            }
+        }
+
+        Ok((columns, parameters))
     }
 
     
@@ -285,16 +311,4 @@ impl BuilderConfig {
 
 
 
-// /// Order by clause
-// #[derive(Debug, Clone)]
-// pub struct OrderBy {
-//     pub field: String,
-//     pub ascending: bool,
-// }
 
-// impl OrderBy {
-//     pub fn to_sql(&self, db: Database) -> String {
-//         let direction = if self.ascending { "ASC" } else { "DESC" };
-//         format!("{} {}", super::check_column_name(self.field.clone(), db), direction)
-//     }
-// }

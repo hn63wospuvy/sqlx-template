@@ -246,14 +246,14 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_select_count(by = "id, email")]
 // New WHERE clause examples
 #[tp_select_one(where = "email = :email and active = :active", fn_name = "find_by_email_and_active")]
-#[tp_select_all(by = "org", where = "active = :active and version > :min_version$i32", fn_name = "find_active_by_org_and_version")]
+#[tp_select_all(by = "org", where = "active = :active and version > :min_version", fn_name = "find_active_by_org_and_version")]
 #[tp_select_count(where = "created_at > :since$String", fn_name = "count_recent_users")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
 #[tp_update(by = "email", on = "password", where = "active = :active", fn_name = "update_password_if_active")]
-#[tp_delete(where = "active = :active and version < :max_version$i32", fn_name = "delete_old_inactive")]
+#[tp_delete(where = "active = :active and version < :max_version", fn_name = "delete_old_inactive")]
 #[tp_select_stream(order = "id desc")]
 #[tp_upsert(by = "email", update = "password, updated_at")]
-#[tp_upsert(by = "id", where = "version < :max_version$i32", fn_name = "upsert_if_version_below")]
+#[tp_upsert(by = "id", where = "version < :max_version", fn_name = "upsert_if_version_below")]
 pub struct User {
     #[auto]
     pub id: i32,
