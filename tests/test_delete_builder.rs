@@ -1,4 +1,4 @@
-use sqlx_template::DeleteTemplate;
+use sqlx_template::{DeleteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 #[derive(DeleteTemplate, FromRow, Debug, Clone)]
@@ -15,6 +15,21 @@ pub struct User {
     pub created_at: String,
     pub name: String,
 }
+
+
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            email TEXT NOT NULL,
+            active BOOLEAN NOT NULL,
+            created_at TEXT NOT NULL,
+            name TEXT NOT NULL
+        )
+    "#
+)]
+async fn create_users_table() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

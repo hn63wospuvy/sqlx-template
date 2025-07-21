@@ -1,4 +1,4 @@
-use sqlx_template::SqliteTemplate;
+use sqlx_template::{SqliteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 #[derive(SqliteTemplate, FromRow, Debug, Clone)]
@@ -8,6 +8,7 @@ use sqlx::{FromRow, SqlitePool};
     with_score_range = "score BETWEEN :min$i32 AND :max$i32"
 )]
 pub struct User {
+    #[auto]
     pub id: i32,
     pub email: String,
     pub score: i32,
@@ -16,6 +17,21 @@ pub struct User {
     pub name: String,
 }
 
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        email TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        active BOOLEAN NOT NULL,
+        created_at TEXT NOT NULL,
+        name TEXT NOT NULL
+    )
+    "#
+)]
+async fn create_users_table() {}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing all builders with custom conditions");
@@ -23,40 +39,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create in-memory SQLite database
     let pool = SqlitePool::connect(":memory:").await?;
     
-    // Create table
-    sqlx::query(
-        r#"
-        CREATE TABLE users (
-            id INTEGER PRIMARY KEY,
-            email TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            active BOOLEAN NOT NULL,
-            created_at TEXT NOT NULL,
-            name TEXT NOT NULL
-        )
-        "#,
-    )
-    .execute(&pool)
-    .await?;
-    
-    // Insert test data
-    sqlx::query("INSERT INTO users (email, score, active, created_at, name) VALUES (?, ?, ?, ?, ?)")
-        .bind("alice@company.com")
-        .bind(85)
-        .bind(true)
-        .bind("2023-01-01")
-        .bind("Alice")
-        .execute(&pool)
-        .await?;
-    
-    sqlx::query("INSERT INTO users (email, score, active, created_at, name) VALUES (?, ?, ?, ?, ?)")
-        .bind("bob@personal.com")
-        .bind(65)
-        .bind(false)
-        .bind("2022-01-01")
-        .bind("Bob")
-        .execute(&pool)
-        .await?;
+    // Create table using generated function
+    create_users_table(&pool).await?;
+
+    // Insert test data using generated insert method
+    let alice = User {
+        id: 0, // Will be auto-generated
+        email: "alice@company.com".to_string(),
+        score: 85,
+        active: true,
+        created_at: "2023-01-01".to_string(),
+        name: "Alice".to_string(),
+    };
+    User::insert(&alice, &pool).await?;
+
+    let bob = User {
+        id: 0, // Will be auto-generated
+        email: "bob@personal.com".to_string(),
+        score: 65,
+        active: false,
+        created_at: "2022-01-01".to_string(),
+        name: "Bob".to_string(),
+    };
+    User::insert(&bob, &pool).await?;
     
     // Test SELECT builder with custom conditions
     println!("\n=== SELECT Builder Tests ===");

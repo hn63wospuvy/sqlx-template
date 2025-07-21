@@ -1,4 +1,4 @@
-use sqlx_template::{SqliteTemplate, UpdateTemplate, DeleteTemplate};
+use sqlx_template::{SqliteTemplate, UpdateTemplate, DeleteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 // Test struct with all three builders and custom conditions
@@ -10,6 +10,7 @@ use sqlx::{FromRow, SqlitePool};
     with_active_status = "active = :active"  // Auto-mapped to bool
 )]
 pub struct User {
+    #[auto]
     pub id: i32,
     pub email: String,
     pub score: i32,
@@ -46,6 +47,20 @@ pub struct UserDelete {
     pub name: String,
 }
 
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        email TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        active BOOLEAN NOT NULL,
+        name TEXT NOT NULL
+    )
+    "#
+)]
+async fn create_users_table() {}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🧪 Comprehensive Builder Test");
@@ -54,38 +69,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create in-memory SQLite database
     let pool = SqlitePool::connect(":memory:").await?;
     
-    // Create table
-    sqlx::query(
-        r#"
-        CREATE TABLE users (
-            id INTEGER PRIMARY KEY,
-            email TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            active BOOLEAN NOT NULL,
-            name TEXT NOT NULL
-        )
-        "#,
-    )
-    .execute(&pool)
-    .await?;
-    
-    // Insert test data
+    // Create table using generated function
+    create_users_table(&pool).await?;
+
+    // Insert test data using generated insert method
     let test_users = [
-        ("alice@company.com", 95, true, "Alice"),
-        ("bob@company.com", 45, false, "Bob"),
-        ("charlie@personal.com", 85, true, "Charlie"),
-        ("diana@company.com", 25, false, "Diana"),
-        ("eve@personal.com", 75, true, "Eve"),
+        User {
+            id: 0, // Will be auto-generated
+            email: "alice@company.com".to_string(),
+            score: 95,
+            active: true,
+            name: "Alice".to_string(),
+        },
+        User {
+            id: 0, // Will be auto-generated
+            email: "bob@company.com".to_string(),
+            score: 45,
+            active: false,
+            name: "Bob".to_string(),
+        },
+        User {
+            id: 0, // Will be auto-generated
+            email: "charlie@personal.com".to_string(),
+            score: 85,
+            active: true,
+            name: "Charlie".to_string(),
+        },
+        User {
+            id: 0, // Will be auto-generated
+            email: "diana@company.com".to_string(),
+            score: 25,
+            active: false,
+            name: "Diana".to_string(),
+        },
+        User {
+            id: 0, // Will be auto-generated
+            email: "eve@personal.com".to_string(),
+            score: 75,
+            active: true,
+            name: "Eve".to_string(),
+        },
     ];
-    
-    for (email, score, active, name) in test_users {
-        sqlx::query("INSERT INTO users (email, score, active, name) VALUES (?, ?, ?, ?)")
-            .bind(email)
-            .bind(score)
-            .bind(active)
-            .bind(name)
-            .execute(&pool)
-            .await?;
+
+    for user in test_users.iter() {
+        User::insert(user, &pool).await?;
     }
     
     println!("\n📊 Initial data: {} users inserted", test_users.len());

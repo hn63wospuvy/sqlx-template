@@ -1,4 +1,4 @@
-use sqlx_template::SqliteTemplate;
+use sqlx_template::{SqliteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 // Test column mapping - placeholder should map to column type automatically
@@ -11,12 +11,28 @@ use sqlx::{FromRow, SqlitePool};
     with_explicit_type = "name = :name$String"  // Explicit type should still work
 )]
 pub struct User {
+    #[auto]
     pub id: i32,
     pub email: String,
     pub score: i32,
     pub active: bool,
     pub name: String,
 }
+
+
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            email TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            active BOOLEAN NOT NULL,
+            name TEXT NOT NULL
+        )
+    "#
+)]
+async fn create_users_table() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

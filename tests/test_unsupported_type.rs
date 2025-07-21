@@ -1,4 +1,4 @@
-use sqlx_template::SqliteTemplate;
+use sqlx_template::{SqliteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 // Test case 2: Custom type should work if compiler accepts it
@@ -8,9 +8,22 @@ use sqlx::{FromRow, SqlitePool};
     with_score = "score = :score$u32"  // u32 should work now
 )]
 pub struct UserCustomType {
+    #[auto]
     pub id: i32,
     pub score: i32,
 }
+
+
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            score INTEGER NOT NULL
+        )
+    "#
+)]
+async fn create_users_table() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

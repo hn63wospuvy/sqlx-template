@@ -1,4 +1,4 @@
-use sqlx_template::SqliteTemplate;
+use sqlx_template::{SqliteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 #[derive(SqliteTemplate, FromRow, Debug, Clone)]
@@ -24,6 +24,7 @@ use sqlx::{FromRow, SqlitePool};
 #[tp_upsert(by = "email", where = "updated_at > :min_update_time$String")]
 #[tp_upsert(by = "id", where = "score < :max_score$f64", fn_name = "upsert_if_score_below")]
 pub struct User {
+    #[auto]
     pub id: i32,
     pub name: String,
     pub email: String,
@@ -35,51 +36,71 @@ pub struct User {
     pub updated_at: String,
 }
 
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        age INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        score REAL NOT NULL,
+        active BOOLEAN NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    "#
+)]
+async fn create_users_table() {}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create in-memory SQLite database
     let pool = SqlitePool::connect(":memory:").await?;
     
-    // Create table
-    sqlx::query(
-        r#"
-        CREATE TABLE users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            age INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            score REAL NOT NULL,
-            active BOOLEAN NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        "#,
-    )
-    .execute(&pool)
-    .await?;
+    // Create table using query macro
+    create_users_table(&pool).await?;
     
-    // Insert test data
+    // Insert test data using generated insert method
     let test_users = vec![
-        ("Alice", "alice@example.com", 25, "active", 85.5, true, "2023-01-01", "2023-06-01"),
-        ("Bob", "bob@example.com", 30, "inactive", 92.0, false, "2023-02-01", "2023-05-01"),
-        ("Charlie", "charlie@example.com", 35, "active", 78.0, true, "2023-03-01", "2023-07-01"),
+        User {
+            id: 0, // Will be auto-generated
+            name: "Alice".to_string(),
+            email: "alice@example.com".to_string(),
+            age: 25,
+            status: "active".to_string(),
+            score: 85.5,
+            active: true,
+            created_at: "2023-01-01".to_string(),
+            updated_at: "2023-06-01".to_string(),
+        },
+        User {
+            id: 0, // Will be auto-generated
+            name: "Bob".to_string(),
+            email: "bob@example.com".to_string(),
+            age: 30,
+            status: "inactive".to_string(),
+            score: 92.0,
+            active: false,
+            created_at: "2023-02-01".to_string(),
+            updated_at: "2023-05-01".to_string(),
+        },
+        User {
+            id: 0, // Will be auto-generated
+            name: "Charlie".to_string(),
+            email: "charlie@example.com".to_string(),
+            age: 35,
+            status: "active".to_string(),
+            score: 78.0,
+            active: true,
+            created_at: "2023-03-01".to_string(),
+            updated_at: "2023-07-01".to_string(),
+        },
     ];
-    
-    for (name, email, age, status, score, active, created_at, updated_at) in test_users {
-        sqlx::query(
-            "INSERT INTO users (name, email, age, status, score, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        )
-        .bind(name)
-        .bind(email)
-        .bind(age)
-        .bind(status)
-        .bind(score)
-        .bind(active)
-        .bind(created_at)
-        .bind(updated_at)
-        .execute(&pool)
-        .await?;
+
+    for user in test_users {
+        User::insert(&user, &pool).await?;
     }
     
     println!("=== Testing Placeholder Operations with SQLite ===\n");
@@ -221,11 +242,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rows_affected = User::upsert_if_score_below(&update_user, &100.0, &pool).await?;
     println!("   Upserted {} rows (score condition)\n", rows_affected);
     
-    // Verify final state
+    // Verify final state using generated find_all method
     println!("14. Final state of users table:");
-    let all_users = sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY id")
-        .fetch_all(&pool)
-        .await?;
+    let all_users = User::find_all(&pool).await?;
 
     for user in all_users {
         println!("   ID: {}, Name: {}, Email: {}, Age: {}, Status: {}, Score: {}, Active: {}",

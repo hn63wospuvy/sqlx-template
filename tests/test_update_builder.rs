@@ -1,4 +1,4 @@
-use sqlx_template::UpdateTemplate;
+use sqlx_template::{UpdateTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 #[derive(UpdateTemplate, FromRow, Debug, Clone)]
@@ -13,6 +13,20 @@ pub struct User {
     pub active: bool,
     pub score: i32,
 }
+
+
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            email TEXT NOT NULL,
+            active BOOLEAN NOT NULL,
+            score INTEGER NOT NULL
+        )
+    "#
+)]
+async fn create_users_table() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

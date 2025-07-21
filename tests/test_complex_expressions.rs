@@ -1,4 +1,4 @@
-use sqlx_template::SqliteTemplate;
+use sqlx_template::{SqliteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 // Test complex SQL expressions
@@ -10,11 +10,25 @@ use sqlx::{FromRow, SqlitePool};
     with_like_pattern = "name LIKE :pattern$String"
 )]
 pub struct User {
+    #[auto]
     pub id: i32,
     pub name: String,
     pub score: i32,
     pub active: bool,
 }
+
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        active BOOLEAN NOT NULL
+    )
+    "#
+)]
+async fn create_users_table() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,41 +37,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create in-memory SQLite database
     let pool = SqlitePool::connect(":memory:").await?;
     
-    // Create table
-    sqlx::query(
-        r#"
-        CREATE TABLE users (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            active BOOLEAN NOT NULL
-        )
-        "#,
-    )
-    .execute(&pool)
-    .await?;
-    
-    // Insert test data
-    sqlx::query("INSERT INTO users (name, score, active) VALUES (?, ?, ?)")
-        .bind("Alice")
-        .bind(15)
-        .bind(true)
-        .execute(&pool)
-        .await?;
-    
-    sqlx::query("INSERT INTO users (name, score, active) VALUES (?, ?, ?)")
-        .bind("Bob")
-        .bind(8)
-        .bind(false)
-        .execute(&pool)
-        .await?;
-    
-    sqlx::query("INSERT INTO users (name, score, active) VALUES (?, ?, ?)")
-        .bind("Charlie")
-        .bind(12)
-        .bind(true)
-        .execute(&pool)
-        .await?;
+    // Create table using generated function
+    create_users_table(&pool).await?;
+
+    // Insert test data using generated insert method
+    let test_users = vec![
+        User {
+            id: 0, // Will be auto-generated
+            name: "Alice".to_string(),
+            score: 15,
+            active: true,
+        },
+        User {
+            id: 0, // Will be auto-generated
+            name: "Bob".to_string(),
+            score: 8,
+            active: false,
+        },
+        User {
+            id: 0, // Will be auto-generated
+            name: "Charlie".to_string(),
+            score: 12,
+            active: true,
+        },
+    ];
+
+    for user in test_users {
+        User::insert(&user, &pool).await?;
+    }
     
     // Test complex conditions
     println!("Testing with_name_and_score:");

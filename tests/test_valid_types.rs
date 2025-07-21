@@ -1,4 +1,4 @@
-use sqlx_template::SqliteTemplate;
+use sqlx_template::{SqliteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 // Test case 3: Valid types should work
@@ -11,11 +11,26 @@ use sqlx::{FromRow, SqlitePool};
     with_active = "active = :active"
 )]
 pub struct UserValidTypes {
+    #[auto]
     pub id: i32,
     pub name: String,
     pub score: f64,
     pub active: bool,
 }
+
+
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            score REAL NOT NULL,
+            active BOOLEAN NOT NULL
+        )
+    "#
+)]
+async fn create_users_table() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

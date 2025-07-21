@@ -1,4 +1,4 @@
-use sqlx_template::{SelectTemplate, UpdateTemplate, DeleteTemplate, PostgresTemplate, MysqlTemplate, SqliteTemplate, SqlxTemplate};
+use sqlx_template::{SelectTemplate, UpdateTemplate, DeleteTemplate, SqliteTemplate, SqlxTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 /// Test SelectTemplate with builder
@@ -47,6 +47,7 @@ pub struct UserDelete {
     with_email_domain = "email LIKE :domain$String"
 )]
 pub struct UserSqlite {
+    #[auto]
     pub id: i32,
     pub email: String,
     pub name: String,
@@ -60,10 +61,26 @@ pub struct UserSqlite {
     with_email_domain = "email LIKE :domain$String"
 )]
 pub struct UserSqlx {
+    #[auto]
     pub id: i32,
     pub email: String,
     pub name: String,
 }
+
+
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            email TEXT NOT NULL,
+            name TEXT NOT NULL,
+            score INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT '2023-01-01'
+        )
+    "#
+)]
+async fn create_users_table() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

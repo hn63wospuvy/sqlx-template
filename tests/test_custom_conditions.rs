@@ -1,4 +1,4 @@
-use sqlx_template::SqliteTemplate;
+use sqlx_template::{SqliteTemplate, sqlite_query};
 use sqlx::{FromRow, SqlitePool};
 
 #[derive(SqliteTemplate, FromRow, Debug, Clone)]
@@ -9,12 +9,28 @@ use sqlx::{FromRow, SqlitePool};
     with_score = "score * score > :min_score$i32"
 )]
 pub struct User {
+    #[auto]
     pub id: i32,
     pub email: String,
     pub active: bool,
     pub score: i32,
     pub name: String,
 }
+
+
+// Create table using query macro
+#[sqlite_query(
+    r#"
+    CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            email TEXT NOT NULL,
+            active BOOLEAN NOT NULL,
+            score INTEGER NOT NULL,
+            name TEXT NOT NULL
+        )
+    "#
+)]
+async fn create_users_table() {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
