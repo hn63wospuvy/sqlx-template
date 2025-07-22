@@ -525,16 +525,160 @@ fn generate_order_methods(field: &Field, database: Database) -> TokenStream {
 
 /// Check if type is string-like
 fn is_string_type(type_str: &str) -> bool {
-    type_str.contains("String") || type_str.contains("str")
+    // Remove whitespace and check for exact matches or common patterns
+    let cleaned = type_str.replace(" ", "");
+
+    // Check for exact string types
+    cleaned == "String" ||
+    cleaned == "&str" ||
+    cleaned == "&'_str" ||
+    cleaned.starts_with("&'") && cleaned.ends_with("str") || // &'a str, &'static str, etc.
+
+    // Check for fully qualified paths
+    cleaned.ends_with("::String") || // std::string::String, alloc::string::String, etc.
+    cleaned.ends_with("::str") ||    // std::str, etc.
+
+    // Check for Option<String> and Option<&str> patterns
+    cleaned == "Option<String>" ||
+    cleaned == "Option<&str>" ||
+    cleaned.starts_with("Option<&'") && cleaned.ends_with("str>") || // Option<&'a str>
+    cleaned.starts_with("Option<") && cleaned.ends_with("::String>") || // Option<std::string::String>
+
+    // Check for Vec<String> patterns (if needed)
+    cleaned == "Vec<String>" ||
+    cleaned.starts_with("Vec<") && cleaned.ends_with("::String>") || // Vec<std::string::String>
+
+    // Check for Box<str> patterns
+    cleaned == "Box<str>" ||
+    cleaned.starts_with("Box<") && cleaned.ends_with("::str>") // Box<std::str>
 }
 
 /// Check if type is numeric or datetime
 fn is_numeric_or_datetime_type(type_str: &str) -> bool {
-    type_str.contains("i32") || type_str.contains("i64") ||
-    type_str.contains("f32") || type_str.contains("f64") ||
-    type_str.contains("DateTime") || type_str.contains("OffsetDateTime") ||
-    type_str.contains("NaiveDateTime") || type_str.contains("NaiveDate") ||
-    type_str.contains("NaiveTime")
+    let cleaned = type_str.replace(" ", "");
+
+    // Check for exact numeric types
+    matches!(cleaned.as_str(),
+        "i8" | "i16" | "i32" | "i64" | "i128" |
+        "u8" | "u16" | "u32" | "u64" | "u128" |
+        "f32" | "f64" | "isize" | "usize"
+    ) ||
+
+    // Check for fully qualified numeric types (less common but possible)
+    cleaned.ends_with("::i8") || cleaned.ends_with("::i16") || cleaned.ends_with("::i32") ||
+    cleaned.ends_with("::i64") || cleaned.ends_with("::i128") ||
+    cleaned.ends_with("::u8") || cleaned.ends_with("::u16") || cleaned.ends_with("::u32") ||
+    cleaned.ends_with("::u64") || cleaned.ends_with("::u128") ||
+    cleaned.ends_with("::f32") || cleaned.ends_with("::f64") ||
+    cleaned.ends_with("::isize") || cleaned.ends_with("::usize") ||
+
+    // Check for Option<numeric> patterns
+    matches!(cleaned.as_str(),
+        "Option<i8>" | "Option<i16>" | "Option<i32>" | "Option<i64>" | "Option<i128>" |
+        "Option<u8>" | "Option<u16>" | "Option<u32>" | "Option<u64>" | "Option<u128>" |
+        "Option<f32>" | "Option<f64>" | "Option<isize>" | "Option<usize>"
+    ) ||
+
+    // Check for datetime types
+    matches!(cleaned.as_str(),
+        "DateTime" | "OffsetDateTime" | "NaiveDateTime" | "NaiveDate" | "NaiveTime"
+    ) ||
+    cleaned.contains("DateTime<") || // DateTime<Utc>, DateTime<Local>, etc.
+    cleaned.ends_with("::DateTime") || cleaned.ends_with("::OffsetDateTime") ||
+    cleaned.ends_with("::NaiveDateTime") || cleaned.ends_with("::NaiveDate") ||
+    cleaned.ends_with("::NaiveTime") ||
+
+    // Check for Option<datetime> patterns
+    matches!(cleaned.as_str(),
+        "Option<DateTime>" | "Option<OffsetDateTime>" | "Option<NaiveDateTime>" |
+        "Option<NaiveDate>" | "Option<NaiveTime>"
+    ) ||
+    cleaned.starts_with("Option<DateTime<") || // Option<DateTime<Utc>>, etc.
+    cleaned.starts_with("Option<") && (
+        cleaned.ends_with("::DateTime>") || cleaned.ends_with("::OffsetDateTime>") ||
+        cleaned.ends_with("::NaiveDateTime>") || cleaned.ends_with("::NaiveDate>") ||
+        cleaned.ends_with("::NaiveTime>")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_string_type() {
+        // Basic string types
+        assert!(is_string_type("String"));
+        assert!(is_string_type("&str"));
+        assert!(is_string_type("&'static str"));
+        assert!(is_string_type("&'a str"));
+
+        // Fully qualified paths
+        assert!(is_string_type("std::string::String"));
+        assert!(is_string_type("alloc::string::String"));
+        assert!(is_string_type("std::str"));
+
+        // Option string types
+        assert!(is_string_type("Option<String>"));
+        assert!(is_string_type("Option<&str>"));
+        assert!(is_string_type("Option<&'a str>"));
+        assert!(is_string_type("Option<std::string::String>"));
+
+        // Vec and Box string types
+        assert!(is_string_type("Vec<String>"));
+        assert!(is_string_type("Vec<std::string::String>"));
+        assert!(is_string_type("Box<str>"));
+        assert!(is_string_type("Box<std::str>"));
+
+        // Should NOT match
+        assert!(!is_string_type("MyString")); // Custom type containing "String"
+        assert!(!is_string_type("StringBuffer")); // Custom type starting with "String"
+        assert!(!is_string_type("i32"));
+        assert!(!is_string_type("Vec<i32>"));
+        assert!(!is_string_type("CustomStringType"));
+        assert!(!is_string_type("my_module::MyString")); // Custom type ending with "String" but not std::string::String
+    }
+
+    #[test]
+    fn test_is_numeric_or_datetime_type() {
+        // Basic numeric types
+        assert!(is_numeric_or_datetime_type("i32"));
+        assert!(is_numeric_or_datetime_type("i64"));
+        assert!(is_numeric_or_datetime_type("f32"));
+        assert!(is_numeric_or_datetime_type("f64"));
+        assert!(is_numeric_or_datetime_type("u32"));
+
+        // Fully qualified numeric types (rare but possible)
+        assert!(is_numeric_or_datetime_type("std::primitive::i32"));
+        assert!(is_numeric_or_datetime_type("core::primitive::u64"));
+
+        // Option numeric types
+        assert!(is_numeric_or_datetime_type("Option<i32>"));
+        assert!(is_numeric_or_datetime_type("Option<f64>"));
+
+        // DateTime types
+        assert!(is_numeric_or_datetime_type("DateTime"));
+        assert!(is_numeric_or_datetime_type("NaiveDateTime"));
+        assert!(is_numeric_or_datetime_type("OffsetDateTime"));
+        assert!(is_numeric_or_datetime_type("DateTime<Utc>"));
+
+        // Fully qualified DateTime types
+        assert!(is_numeric_or_datetime_type("chrono::DateTime"));
+        assert!(is_numeric_or_datetime_type("chrono::NaiveDateTime"));
+        assert!(is_numeric_or_datetime_type("time::OffsetDateTime"));
+
+        // Option DateTime types
+        assert!(is_numeric_or_datetime_type("Option<DateTime>"));
+        assert!(is_numeric_or_datetime_type("Option<DateTime<Utc>>"));
+        assert!(is_numeric_or_datetime_type("Option<chrono::DateTime>"));
+
+        // Should NOT match
+        assert!(!is_numeric_or_datetime_type("String"));
+        assert!(!is_numeric_or_datetime_type("&str"));
+        assert!(!is_numeric_or_datetime_type("MyCustomi32Type")); // Custom type containing "i32"
+        assert!(!is_numeric_or_datetime_type("Vec<String>"));
+        assert!(!is_numeric_or_datetime_type("my_module::MyDateTime")); // Custom type ending with "DateTime"
+    }
 }
 
 /// Implement update builder macro
