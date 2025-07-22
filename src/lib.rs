@@ -10,8 +10,7 @@ use crate::sqlx_template::Database;
 
 mod sqlx_template;
 mod columns;
-mod util;
-
+mod parser;
 
 
 /// `InsertTemplate` is a derive macro designed to automatically generate record insert functions

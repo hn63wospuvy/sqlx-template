@@ -476,7 +476,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             }
         },
         QueryType::Page => {
-            let count_query = util::convert_to_count_query(&sql, dialect.as_ref()).unwrap();
+            let count_query = parser::convert_to_count_query(&sql, dialect.as_ref()).unwrap();
             let count_query_fn = quote! {
                 pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> core::result::Result<i64, sqlx::Error> {
                     let sql = #count_query;
@@ -490,7 +490,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             param_names.push("offset".to_string());
             param_names.push("limit".to_string());
             
-            let ValidateQueryResult {sql, params} = util::convert_to_page_query(&query_string, dialect.as_ref(), &param_names).unwrap();
+            let ValidateQueryResult {sql, params} = parser::convert_to_page_query(&query_string, dialect.as_ref(), &param_names).unwrap();
             let page_binds = params.iter().map(|field| {
                 // param starts with ':'
                 if field.as_str() == ":offset" {
