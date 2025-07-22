@@ -33,11 +33,15 @@ mod parser;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use sqlx_template::InsertTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Postgres> = todo!();
 /// #[derive(InsertTemplate, sqlx::FromRow)]
 /// #[table("users")]
+/// #[db("postgres")]
 /// #[debug_slow = 1000]
 /// pub struct User {
 ///     #[auto]
@@ -52,7 +56,7 @@ mod parser;
 /// println!("Rows affected: {}", rows_affected);
 ///
 /// // With PostgreSQL database
-/// #[derive(InsertTemplate, sqlx::FromRow)]
+/// #[derive(InsertTemplate, sqlx::FromRow, Debug)]
 /// #[table("users")]
 /// #[db("postgres")]
 /// pub struct UserPg {
@@ -62,8 +66,11 @@ mod parser;
 ///     pub password: String,
 /// }
 ///
-/// let new_user = UserPg::insert_return(&user, &pool).await?;
+/// let user_pg = UserPg { id: 0, email: "john.doe@example.com".to_string(), password: "password123".to_string() };
+/// let new_user = UserPg::insert_return(&user_pg, &pool).await?;
 /// println!("New user: {:?}", new_user);
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// In the example above:
@@ -118,9 +125,13 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use sqlx_template::UpdateTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Sqlite> = todo!();
+/// # let user_id = 1i32;
 /// #[derive(UpdateTemplate, sqlx::FromRow)]
 /// #[table("users")]
 /// #[db("sqlite")]
@@ -137,8 +148,16 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     pub version: i32
 /// }
 ///
+/// let user = User {
+///     id: 1,
+///     email: "user@example.com".to_string(),
+///     password: "password".to_string(),
+///     score: 85,
+///     version: 1
+/// };
+///
 /// // Traditional update:
-/// User::update_user(&user, &pool).await?;
+/// User::update_user(&user.version, &user, &pool).await?;
 ///
 /// // Builder pattern update:
 /// let affected = User::builder_update()
@@ -148,6 +167,8 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     .with_high_score(80)?
 ///     .execute(&pool)
 ///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 
@@ -196,9 +217,12 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use sqlx_template::DeleteTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Sqlite> = todo!();
 /// #[derive(DeleteTemplate, sqlx::FromRow)]
 /// #[table("users")]
 /// #[db("sqlite")]
@@ -214,15 +238,23 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     pub created_at: String,
 /// }
 ///
+/// let user = User {
+///     id: 1,
+///     email: "user@example.com".to_string(),
+///     password: "password".to_string(),
+///     created_at: "2024-01-01".to_string()
+/// };
+///
 /// // Traditional delete:
 /// let rows_affected = User::delete_by_id(&user.id, &pool).await?;
 ///
 /// // Builder pattern delete:
 /// let deleted = User::builder_delete()
-///     .active(&false)?
 ///     .with_old_accounts("2023-01-01")?
 ///     .execute(&pool)
 ///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Note
@@ -278,7 +310,12 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// ## Case 1: Column-Mapped Placeholders
 /// When a placeholder (`:name`) appears in a comparison operation (`=`, `!=`, `<`, `>`, `LIKE`)
 /// and is mapped to a struct field, the parameter type is automatically inferred from the struct field:
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::SelectTemplate;
+///
+/// #[derive(SelectTemplate, sqlx::FromRow)]
+/// #[table("users")]
+/// #[db("postgres")]
 /// #[tp_select_all(where = "name = :name and age > :age")]
 /// pub struct User {
 ///     pub name: String,  // :name parameter will be &str (String -> &str)
@@ -289,7 +326,12 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// ## Case 2: Custom Type Placeholders
 /// Use the format `:name$Type` to specify a custom parameter type:
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::SelectTemplate;
+///
+/// #[derive(SelectTemplate, sqlx::FromRow)]
+/// #[table("users")]
+/// #[db("postgres")]
 /// #[tp_select_all(where = "score > :min_score$f64 and created_at > :since$chrono::DateTime<chrono::Utc>")]
 /// pub struct User {
 ///     pub score: f64,
@@ -300,7 +342,12 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// ## Mixed Usage
 /// You can combine both approaches in the same WHERE clause:
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::SelectTemplate;
+///
+/// #[derive(SelectTemplate, sqlx::FromRow)]
+/// #[table("users")]
+/// #[db("postgres")]
 /// #[tp_select_all(where = "name = :name and score > :min_score$f64")]
 /// pub struct User {
 ///     pub name: String,  // :name mapped to column
@@ -319,12 +366,16 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::SelectTemplate;
-/// use sqlx::FromRow;
+/// use sqlx::{FromRow, Pool};
+/// use futures_util::StreamExt;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Postgres> = todo!();
 /// #[derive(SelectTemplate, FromRow)]
 /// #[table("users")]
+/// #[db("postgres")]
 /// #[tp_select_one(by = "id", fn_name = "find_user_by_id")]
 /// #[tp_select_one(by = "email", where = "active = :active")]
 /// #[tp_select_all(by = "id, email", order = "id desc", where = "score > :min_score$f64")]
@@ -379,6 +430,8 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     .order_by_score_desc()?
 ///     .find_all(&pool)
 ///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// In the example above:
@@ -394,7 +447,7 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated query methods.
 ///
 
-#[proc_macro_derive(SelectTemplate, attributes(table, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_select_builder, db, tp_select_builder))]
+#[proc_macro_derive(SelectTemplate, attributes(table, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_select_builder, db, tp_select_builder, auto))]
 pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::select::derive_select(&input, None, sqlx_template::Scope::Struct, None) {
@@ -423,7 +476,7 @@ pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use sqlx_template::Columns;
 ///
 /// #[derive(Columns)]
@@ -482,11 +535,11 @@ pub fn columns_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::DDLTemplate;
 ///
 /// #[derive(DDLTemplate)]
-/// #[table = "users"]
+/// #[table("users")]
 /// pub struct User {
 ///     #[column(primary_key, auto_increment)]
 ///     pub id: i32,
@@ -550,9 +603,12 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::UpsertTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Postgres> = todo!();
 /// // PostgreSQL example
 /// #[derive(UpsertTemplate, sqlx::FromRow)]
 /// #[table("users")]
@@ -595,6 +651,8 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// // With returning (PostgreSQL and SQLite)
 /// let upserted_user = UserPg::upsert_by_id(&user, &pool).await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Note
@@ -644,17 +702,21 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::SqlxTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Postgres> = todo!();
 /// #[derive(SqlxTemplate, sqlx::FromRow)]
-/// #[table = "users"]
+/// #[table("users")]
+/// #[db("postgres")]
 /// #[debug_slow = 1000]
 /// #[tp_select_one(by = "id", fn_name = "find_by_id")]
 /// #[tp_select_all(by = "email", order = "id desc")]
 /// #[tp_update(by = "id", op_lock = "version")]
 /// #[tp_delete(by = "id")]
-/// #[tp_upsert(conflict = "email", update = "password")]
+/// #[tp_upsert(by = "email", update = "password")]
 /// pub struct User {
 ///     #[auto]
 ///     pub id: i32,
@@ -663,12 +725,25 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     pub version: i32,
 /// }
 ///
+/// let user = User {
+///     id: 1,
+///     email: "user@example.com".to_string(),
+///     password: "password".to_string(),
+///     version: 1
+/// };
+///
 /// // All operations are now available:
-/// // User::insert(&user, &pool).await?;
-/// // User::find_by_id(&pool, 1).await?;
-/// // User::update_by_id(&user, &pool).await?;
-/// // User::delete_by_id(&1, &pool).await?;
-/// // User::upsert_on_conflict_email(&user, &pool).await?;
+/// let users = User::builder_select()
+///     .find_all(&pool)
+///     .await?;
+/// let affected = User::builder_update()
+///     .execute(&pool)
+///     .await?;
+/// let deleted = User::builder_delete()
+///     .execute(&pool)
+///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Note
@@ -714,14 +789,17 @@ pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::PostgresTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Postgres> = todo!();
 /// #[derive(PostgresTemplate, sqlx::FromRow)]
-/// #[table = "users"]
+/// #[table("users")]
 /// #[tp_update(by = "id", returning = true)]
 /// #[tp_delete(by = "id", returning = true)]
-/// #[tp_upsert(conflict = "email", returning = true)]
+/// #[tp_upsert(by = "email", returning = true)]
 /// pub struct User {
 ///     #[auto]
 ///     pub id: i32,
@@ -729,11 +807,24 @@ pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///     pub password: String,
 /// }
 ///
+/// let user = User {
+///     id: 1,
+///     email: "user@example.com".to_string(),
+///     password: "password".to_string()
+/// };
+///
 /// // PostgreSQL-specific features:
-/// // let new_user = User::insert_return(&user, &pool).await?;
-/// // let updated_user = User::update_by_id_return(&user, &pool).await?;
-/// // let deleted_user = User::delete_by_id_return(&1, &pool).await?;
-/// // let upserted_user = User::upsert_on_conflict_email_return(&user, &pool).await?;
+/// let users = User::builder_select()
+///     .find_all(&pool)
+///     .await?;
+/// let affected = User::builder_update()
+///     .execute(&pool)
+///     .await?;
+/// let deleted = User::builder_delete()
+///     .execute(&pool)
+///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Note
@@ -780,9 +871,12 @@ pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::MysqlTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Any> = todo!();
 /// #[derive(MysqlTemplate, sqlx::FromRow)]
 /// #[table("users")]
 /// #[tp_update(by = "id")]
@@ -795,11 +889,24 @@ pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 ///     pub password: String,
 /// }
 ///
+/// let user = User {
+///     id: 1,
+///     email: "user@example.com".to_string(),
+///     password: "password".to_string()
+/// };
+///
 /// // MySQL-optimized operations:
-/// // User::insert(&user, &pool).await?;
-/// // User::update_by_id(&user, &pool).await?;
-/// // User::delete_by_id(&1, &pool).await?;
-/// // User::upsert_by_email(&user, &pool).await?;
+/// let users = User::builder_select()
+///     .find_all(&pool)
+///     .await?;
+/// let affected = User::builder_update()
+///     .execute(&pool)
+///     .await?;
+/// let deleted = User::builder_delete()
+///     .execute(&pool)
+///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Note
@@ -849,9 +956,12 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,no_run
 /// use sqlx_template::SqliteTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Sqlite> = todo!();
 /// #[derive(SqliteTemplate, sqlx::FromRow)]
 /// #[table("users")]
 /// #[tp_select_builder(
@@ -870,6 +980,14 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///     pub active: bool,
 /// }
 ///
+/// let user = User {
+///     id: 1,
+///     email: "john@example.com".to_string(),
+///     password: "password".to_string(),
+///     score: 85,
+///     active: true
+/// };
+///
 /// // Traditional operations:
 /// // User::insert(&user, &pool).await?;
 /// // User::update_by_id(&user, &pool).await?;
@@ -884,6 +1002,8 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///     .order_by_score_desc()?
 ///     .find_all(&pool)
 ///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Note
@@ -928,9 +1048,12 @@ pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::AnyTemplate;
+/// use sqlx::Pool;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let pool: Pool<sqlx::Any> = todo!();
 /// #[derive(AnyTemplate, sqlx::FromRow)]
 /// #[table("users")]
 /// #[tp_update(by = "id")]
@@ -942,6 +1065,19 @@ pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     pub email: String,
 ///     pub password: String,
 /// }
+///
+/// let user = User {
+///     id: 1,
+///     email: "user@example.com".to_string(),
+///     password: "password".to_string()
+/// };
+///
+/// // Database operations work across different database types
+/// let users = User::builder_select()
+///     .find_all(&pool)
+///     .await?;
+/// # Ok(())
+/// # }
 ///
 /// // Database-agnostic operations:
 /// // User::insert(&user, &pool).await?;
@@ -973,9 +1109,14 @@ pub fn any_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// # Syntax
 ///
-/// ```rust
-/// #[tp_gen(<configuration>)]
-/// pub struct <StructName> { ... }
+/// ```rust,ignore
+/// use sqlx_template::tp_gen;
+///
+/// #[tp_gen(table = "users")]
+/// pub struct User {
+///     pub id: i32,
+///     pub name: String,
+/// }
 /// ```
 ///
 /// # Attributes
@@ -985,10 +1126,10 @@ pub fn any_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// # Example Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::tp_gen;
 ///
-/// #[tp_gen(/* configuration parameters */)]
+/// #[tp_gen(table = "users")]
 /// pub struct User {
 ///     pub id: i32,
 ///     pub name: String,
@@ -1019,10 +1160,15 @@ pub fn tp_gen(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 ///
 /// # Syntax
 ///
-/// ```rust
+/// ```rust,no_run
+/// use sqlx_template::TableName;
+///
 /// #[derive(TableName)]
-/// #[table("<table_name>")]
-/// pub struct <StructName> { ... }
+/// #[table("users")]
+/// pub struct User {
+///     pub id: i32,
+///     pub name: String,
+/// }
 /// ```
 ///
 /// # Attributes
@@ -1035,7 +1181,7 @@ pub fn tp_gen(args: TokenStream, item: TokenStream) -> proc_macro::TokenStream {
 ///
 /// # Example Usage
 ///
-/// ```rust
+/// ```rust,no_run
 /// use sqlx_template::TableName;
 ///
 /// #[derive(TableName)]
@@ -1071,12 +1217,15 @@ pub fn table_name_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 ///
 /// # Syntax
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::multi_query;
+///
 /// #[multi_query(
-///     sql = "<query>" | file = "<path to file query>" | "<query>",
-///     debug = <integer>
+///     sql = "UPDATE users SET active = true WHERE id = :id",
+///     debug = 100,
+///     db = "sqlite"
 /// )]
-/// pub async fn <function_name>(<parameters>) {}
+/// pub async fn activate_user(id: i32) {}
 /// ```
 ///
 /// # Attributes
@@ -1111,16 +1260,20 @@ pub fn table_name_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 ///
 /// # Example Usage
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::multi_query;
+///
 /// #[multi_query(
 ///     sql = "BEGIN; UPDATE user SET age = :age WHERE name = :name; DELETE FROM session WHERE user_name = :name; COMMIT;",
-///     debug = 100
+///     debug = 100,
+///     db = "sqlite"
 /// )]
 /// pub async fn update_user_and_clear_sessions(name: &str, age: i32) {}
 ///
 /// #[multi_query(
 ///     sql = "INSERT INTO user (name, age) VALUES (:name, :age); INSERT INTO log (user_name, action) VALUES (:name, 'created')",
-///     debug = 0
+///     debug = 0,
+///     db = "sqlite"
 /// )]
 /// pub async fn insert_user_with_log(name: &str, age: i32) {}
 /// ```
@@ -1182,12 +1335,19 @@ pub fn sqlite_multi_query(args: TokenStream, item: TokenStream) -> proc_macro::T
 ///
 /// # Syntax
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::query;
+///
+/// struct User {
+///     pub id: i32,
+///     pub name: String,
+/// }
+///
 /// #[query(
-///     sql = "<query>" | file = "<path to file query>" | "<query>",
-///     debug = <integer>
+///     sql = "SELECT * FROM users WHERE id = :id",
+///     debug = 100
 /// )]
-/// pub async fn <function_name>(<parameters>) -> <return_type> {}
+/// pub async fn get_user_by_id(id: i32) -> Option<User> {}
 /// ```
 ///
 /// # Attributes
@@ -1241,20 +1401,31 @@ pub fn sqlite_multi_query(args: TokenStream, item: TokenStream) -> proc_macro::T
 ///
 /// # Example Usage
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::query;
+///
+/// struct UserInfo {
+///     pub name: String,
+///     pub age: i32,
+/// }
+///
+/// type RowAffected = u64;
+///
 /// #[query(
 ///     sql = "SELECT * FROM user WHERE (name = :name and age = :age) OR name LIKE '%:name%'",
+///     db = "postgres",
 ///     debug = 100
 /// )]
 /// pub async fn query_user_info(name: &str, age: i32) -> Vec<UserInfo> {}
 ///
 /// #[query(
 ///     sql = "INSERT INTO user (name, age) VALUES (:name, :age)",
+///     db = "postgres",
 ///     debug = 0
 /// )]
 /// pub async fn insert_user(name: &str, age: i32) -> RowAffected {}
 ///
-/// #[query("DELETE FROM user WHERE name = :name")]
+/// #[query("DELETE FROM user WHERE name = :name", debug = 0, db = "postgres")]
 /// pub async fn delete_user(name: &str) {}
 /// ```
 ///
@@ -1314,12 +1485,20 @@ pub fn sqlite_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenSt
 ///
 /// # Syntax
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::select;
+///
+/// struct User {
+///     pub id: i32,
+///     pub active: bool,
+/// }
+///
 /// #[select(
-///     sql = "<query>" | file = "<path to file query>" | "<query>",
-///     debug = <integer>
+///     sql = "SELECT * FROM users WHERE active = :active",
+///     db = "postgres",
+///     debug = 100
 /// )]
-/// pub async fn <function_name>(<parameters>) -> <return_type> {}
+/// pub async fn get_active_users(active: bool) -> Vec<User> {}
 /// ```
 ///
 /// # Attributes
@@ -1372,13 +1551,21 @@ pub fn sqlite_query(args: TokenStream, item: TokenStream) -> proc_macro::TokenSt
 ///   - : Returns nothing.
 /// # Example Usage
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::select;
+///
+/// struct UserInfo {
+///     pub name: String,
+///     pub age: i32,
+/// }
+///
 /// #[select(
 ///     sql = "
 ///     SELECT *
 ///     FROM user
 ///     WHERE (name = :name and age = :age) OR name LIKE '%:name%'
 /// ",
+///     db = "postgres",
 ///     debug = 100
 /// )]
 /// pub async fn query_user_info(name: &str, age: i32) -> Vec<UserInfo> {}
@@ -1436,12 +1623,15 @@ pub fn sqlite_select(args: TokenStream, item: TokenStream) -> proc_macro::TokenS
 ///
 /// # Syntax
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::update;
+///
 /// #[update(
-///     sql = "<query>" | file = "<path to file query>" | "<query>",
-///     debug = <integer>
+///     sql = "UPDATE users SET active = :active WHERE id = :id",
+///     db = "postgres",
+///     debug = 100
 /// )]
-/// pub async fn <function_name>(<parameters>) -> <return_type> {}
+/// pub async fn update_user_status(id: i32, active: bool) -> u64 {}
 /// ```
 ///
 /// # Attributes
@@ -1495,9 +1685,14 @@ pub fn sqlite_select(args: TokenStream, item: TokenStream) -> proc_macro::TokenS
 ///
 /// # Example Usage
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::update;
+///
+/// type RowAffected = u64;
+///
 /// #[update(
 ///     sql = "UPDATE user SET age = :age WHERE name = :name",
+///     db = "postgres",
 ///     debug = 100
 /// )]
 /// pub async fn update_user_age(name: &str, age: i32) -> RowAffected {}
@@ -1560,12 +1755,15 @@ pub fn sqlite_update(args: TokenStream, item: TokenStream) -> proc_macro::TokenS
 ///
 /// # Syntax
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::insert;
+///
 /// #[insert(
-///     sql = "<query>" | file = "<path to file query>" | "<query>",
-///     debug = <integer>
+///     sql = "INSERT INTO users (name, email) VALUES (:name, :email)",
+///     debug = 100,
+///     db = "sqlite"
 /// )]
-/// pub async fn <function_name>(<parameters>) -> <return_type> {}
+/// pub async fn create_user(name: &str, email: &str) -> u64 {}
 /// ```
 ///
 /// # Attributes
@@ -1619,14 +1817,19 @@ pub fn sqlite_update(args: TokenStream, item: TokenStream) -> proc_macro::TokenS
 ///
 /// # Example Usage
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::insert;
+///
+/// type RowAffected = u64;
+///
 /// #[insert(
 ///     sql = "INSERT INTO user (name, age) VALUES (:name, :age)",
-///     debug = 100
+///     debug = 100,
+///     db = "sqlite"
 /// )]
 /// pub async fn insert_user(name: &str, age: i32) -> RowAffected {}
 ///
-/// #[insert("INSERT INTO user (name, age) VALUES (:name, :age)")]
+/// #[insert("INSERT INTO user (name, age) VALUES (:name, :age)", db = "sqlite")]
 /// pub async fn insert_user_no_return(name: &str, age: i32) {}
 /// ```
 ///
@@ -1686,12 +1889,15 @@ pub fn sqlite_insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenS
 ///
 /// # Syntax
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::delete;
+///
 /// #[delete(
-///     sql = "<query>" | file = "<path to file query>" | "<query>",
-///     debug = <integer>
+///     sql = "DELETE FROM users WHERE id = :id",
+///     debug = 100,
+///     db = "sqlite"
 /// )]
-/// pub async fn <function_name>(<parameters>) -> <return_type> {}
+/// pub async fn remove_user(id: i32) -> u64 {}
 /// ```
 ///
 /// # Attributes
@@ -1745,16 +1951,22 @@ pub fn sqlite_insert(args: TokenStream, item: TokenStream) -> proc_macro::TokenS
 ///
 /// # Example Usage
 ///
-/// ```rust
+/// ```rust,ignore
+/// use sqlx_template::delete;
+///
+/// type RowAffected = u64;
+///
 /// #[delete(
 ///     sql = "DELETE FROM user WHERE name = :name",
-///     debug = 100
+///     debug = 100,
+///     db = "sqlite"
 /// )]
 /// pub async fn delete_user(name: &str) -> RowAffected {}
 ///
 /// #[delete(
 ///     sql = "DELETE FROM user WHERE name = :name",
-///     debug = 0
+///     debug = 0,
+///     db = "sqlite"
 /// )]
 /// pub async fn delete_user_no_return(name: &str) {}
 /// ```

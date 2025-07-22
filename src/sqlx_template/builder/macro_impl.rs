@@ -277,7 +277,20 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             ///
             /// # Example
             ///
-            /// ```rust
+            /// ```rust,no_run
+            /// # use sqlx_template::SqliteTemplate;
+            /// # use sqlx::{FromRow, SqlitePool};
+            /// # #[derive(SqliteTemplate, FromRow, Debug, Clone)]
+            /// # #[table("users")]
+            /// # #[tp_select_builder]
+            /// # pub struct User {
+            /// #     pub id: i32,
+            /// #     pub email: String,
+            /// #     pub active: bool,
+            /// #     pub created_at: chrono::DateTime<chrono::Utc>,
+            /// # }
+            /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+            /// # let pool = SqlitePool::connect(":memory:").await?;
             /// // Basic usage
             /// let users = User::builder_select()
             ///     .email("john@example.com")?
@@ -291,6 +304,8 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             ///     .with_email_domain("@company.com")?  // Custom condition
             ///     .find_all(&pool)
             ///     .await?;
+            /// # Ok(())
+            /// # }
             /// ```
             ///
             /// # Returns
@@ -716,7 +731,21 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             ///
             /// # Example
             ///
-            /// ```rust
+            /// ```rust,no_run
+            /// # use sqlx_template::SqliteTemplate;
+            /// # use sqlx::{FromRow, SqlitePool};
+            /// # #[derive(SqliteTemplate, FromRow, Debug, Clone)]
+            /// # #[table("users")]
+            /// # #[tp_update_builder]
+            /// # pub struct User {
+            /// #     pub id: i32,
+            /// #     pub email: String,
+            /// #     pub active: bool,
+            /// #     pub status: String,
+            /// # }
+            /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+            /// # let pool = SqlitePool::connect(":memory:").await?;
+            /// # let user_id = 1;
             /// // Update user email and status
             /// let affected_rows = User::builder_update()
             ///     .on_email("newemail@example.com")?     // SET email = ?
@@ -731,6 +760,8 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             ///     .with_email_domain("@company.com")?    // Custom WHERE condition
             ///     .execute(&pool)
             ///     .await?;
+            /// # Ok(())
+            /// # }
             /// ```
             ///
             /// # Returns
@@ -1034,7 +1065,21 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             ///
             /// # Example
             ///
-            /// ```rust
+            /// ```rust,no_run
+            /// # use sqlx_template::SqliteTemplate;
+            /// # use sqlx::{FromRow, SqlitePool};
+            /// # #[derive(SqliteTemplate, FromRow, Debug, Clone)]
+            /// # #[table("users")]
+            /// # #[tp_delete_builder]
+            /// # pub struct User {
+            /// #     pub id: i32,
+            /// #     pub active: bool,
+            /// #     pub created_at: chrono::DateTime<chrono::Utc>,
+            /// # }
+            /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+            /// # let pool = SqlitePool::connect(":memory:").await?;
+            /// # let user_id = 1;
+            /// # let cutoff_date = chrono::Utc::now();
             /// // Delete specific user
             /// let deleted_rows = User::builder_delete()
             ///     .id(&user_id)?                         // WHERE id = ?
@@ -1053,6 +1098,8 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             ///     .with_email_domain("@oldcompany.com")? // Custom WHERE condition
             ///     .execute(&pool)
             ///     .await?;
+            /// # Ok(())
+            /// # }
             /// ```
             ///
             /// # Returns
