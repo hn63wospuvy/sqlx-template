@@ -1,0 +1,298 @@
+
+use chrono::{DateTime, Utc};
+use futures::StreamExt;
+use sqlx_template::{insert, multi_query, postgres_delete, postgres_select, query, select, update, Columns, DeleteTemplate, PostgresTemplate, SelectTemplate, SqlxTemplate, TableName, UpdateTemplate, UpsertTemplate};
+use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
+use sqlx_template::InsertTemplate;
+
+const DB_URL: &str = "sqlite://sqlite.db";
+
+use testcontainers_modules::{postgres, testcontainers::runners::AsyncRunner};
+
+
+#[tokio::main]
+async fn main() {
+
+    const USERNAME: &str = "postgres";
+    const PASSWORD: &str = "postgres";
+    const DATABASE: &str = "sqlx";
+    
+    let container = postgres::Postgres::default()
+    .with_user(USERNAME)
+    .with_password(PASSWORD)
+    .with_db_name(DATABASE)
+    .start().await.unwrap();
+
+    let host = container.get_host().await.unwrap();
+    let port = container.get_host_port_ipv4(5432).await.unwrap();
+
+    let dsn = format!("postgresql://{USERNAME}:{PASSWORD}@{host}:{port}/{DATABASE}");
+
+    let db = sqlx::PgPool::connect(&dsn).await.unwrap();
+    println!("Setup db done");
+    migrate(&db).await.unwrap();
+
+    let org_1 = Organization { 
+        name: "org1".into(), 
+        code: "org_1".into(), 
+        active: true, 
+        created_by: Some("test-user".into()), 
+        ..Default::default()
+    };
+
+    // Insert new org
+    let _ = Organization::insert(&org_1, &db).await.unwrap();
+
+    // Fetch all org
+    let orgs = Organization::find_all(&db).await.unwrap();
+    println!("Orgs: {orgs:#?}");
+    let org_1 = orgs.first().unwrap();
+    let user_1 = User { 
+        email: format!("user1@abc.com"), 
+        password: "password".into(), 
+        org: Some(org_1.id), 
+        active: true, 
+        ..Default::default()
+    };
+    let user_2 = User { 
+        email: format!("user2@abc.com"), 
+        password: "password".into(), 
+        org: Some(org_1.id), 
+        active: true, 
+        ..Default::default()
+    };
+
+    // Insert user
+    User::insert(&user_1, &db).await.unwrap();
+    User::insert(&user_2, &db).await.unwrap();
+    insert_new_user("user3@abc.com", "password", org_1.id, &db).await.unwrap();
+
+
+    // Query user
+    let users = query_all_user_info("user", 0, &db).await.unwrap();
+    println!("Query Users: {users:#?}");
+
+    let users = User::get_last_inserted(&1, &db).await.unwrap();
+    println!("Last inserted user: {users:#?}");
+
+    // Stream all users order by id
+
+    let mut users = User::stream_order_by_id_desc(&db);
+    while let Some(Ok(u)) = users.next().await {
+        println!("Stream User: {u:#?}");
+    }
+
+    // Stream org
+    let mut org_list = query_user_org("user", 0, &db);
+    while let Some(Ok(o)) = org_list.next().await {
+        println!("Steam Org: {o:#?}");
+    }
+    
+
+    // Pagination
+    let page_request = PageRequest::default();
+    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&Some(org_1.id), page_request, &db)
+        .await
+        .unwrap()
+        .into_page(page_request);
+    println!("Page user: {page:#?}");
+
+    let user = User::find_one_by_group(&None, &db).await.unwrap();
+
+
+    // Transaction
+    let mut tx = db.begin().await.unwrap();
+    let org_2 = Organization { 
+        name: "org2".into(), 
+        code: "org_2".into(), 
+        active: true, 
+        created_by: Some("test-user".into()), 
+        ..Default::default()
+    };
+    let _ = Organization::insert(&org_2, &mut *tx).await.unwrap();
+    let org = Organization::find_one_by_code(&"org_2".to_string(), &mut *tx).await.unwrap().unwrap();
+    let mut user = User::find_one_by_email(&"user2@abc.com".to_string(), &mut *tx).await.unwrap().unwrap();
+    user.org = Some(org.id);
+    user.updated_at = Some(Utc::now());
+    user.updated_by = Some("abc".into());
+    User::update_user(&user.id, &user, &mut *tx).await.unwrap();
+
+
+    User::upsert_by_email(&user,  &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning(&user.id, &user, &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning_id(&user.id, &user, &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning_id_email(&user.id, &user, &mut *tx).await.unwrap();
+
+    tx.commit().await.unwrap();
+
+    
+    let mut user_updated_stream = User::update_user_returning_stream(&user.id, &user, &db).await;
+    while let Some(Ok(o)) = user_updated_stream.next().await {
+        println!("Updated user: {o:#?}");
+    }
+
+    let user = User::find_one_by_email(&"user2@abc.com".to_string(), &db).await.unwrap().unwrap();
+    println!("User after update: {user:#?}");
+
+
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PageRequest {
+    offset: u64, 
+    limit: u32,
+    count: bool
+}
+
+impl From<PageRequest> for (i64, i32, bool) {
+    fn from(value: PageRequest) -> Self {
+        (value.offset as i64, value.limit as i32, value.count)
+    }
+}
+
+impl Default for PageRequest {
+    fn default() -> Self {
+        Self { 
+            offset: 0, 
+            limit: 10, 
+            count: true 
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Page<T> {
+    pub offset: u64,
+    pub limit: u32,
+    pub total: Option<u64>,
+    pub data: Vec<T>
+}
+
+trait IntoPage<Item> {
+    type Item;
+    fn into_page(self, page_request: PageRequest) -> Page<Item>;
+}
+
+impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
+    type Item = T;
+    fn into_page(self, page_request: PageRequest) -> Page<T> {
+
+        Page {
+            offset: page_request.offset,
+            limit: page_request.limit,
+            total: self.1.map(|x| x as u64),
+            data: self.0
+        }
+    }
+}
+
+#[derive(PostgresTemplate, FromRow, Default, Clone, Debug)]
+#[debug_slow = 1000]
+#[table("users")]
+#[tp_upsert(by = "id")]
+#[tp_upsert(by = "email")]
+#[tp_delete(by = "id")]
+#[tp_delete(by = "id, email")]
+#[tp_select_all(by = "id, email", order = "id desc")]
+#[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted", where = "active = true AND id > :id")]
+// #[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
+#[tp_select_one(by = "email")]
+#[tp_select_one(by = "group")]
+#[tp_select_page(by = "org", order = "id desc, org desc")]
+#[tp_select_count(by = "id, email")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning", returning = true)]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id", returning = "id")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id_email", returning = "id, email")]
+#[tp_select_stream(order = "id desc")]
+pub struct User {
+    #[auto]
+    pub id: i32,
+    pub email: String,
+    pub password: String,
+    pub org: Option<i32>,
+    pub active: bool,
+    pub group: Option<String>,
+    #[auto]
+    pub version: i32,
+    pub created_by: Option<String>,
+    #[auto]
+    pub created_at: DateTime<Utc>,
+    pub updated_by: Option<String>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+
+
+
+
+#[derive(SqlxTemplate, FromRow, Default, Clone, Debug, Columns)]
+#[table("organizations")]
+#[db("postgres")]
+#[tp_delete(by = "id")]
+#[tp_select_one(by = "code")]
+#[tp_select_all(order = "id desc")]
+pub struct Organization {
+    #[auto]
+    pub id: i32,
+    #[group = "a"]
+    #[group = "b"]
+    pub name: String,
+    pub code: String,
+    pub image: Option<String>,
+    pub active: bool,
+    pub created_by: Option<String>,
+    #[auto]
+    pub created_at: DateTime<Utc>,
+    pub updated_by: Option<String>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+
+#[multi_query(file = "sql/init.sql", 0)]
+#[db("postgres")]
+async fn migrate() {}
+
+
+#[insert("INSERT INTO users(email, password, org, active, created_by, updated_by, updated_at) VALUES (:email, :password, :org, true, NULL, NULL, NULL)")]
+#[db("postgres")]
+async fn insert_new_user(email: &str, password: &str, org: i32) {}
+
+#[select(
+    sql = "
+    SELECT *
+    FROM users
+    WHERE (email = :name and org = :org) OR email LIKE '%' || :name || '%'
+",
+    debug = 100
+)]
+#[db("postgres")]
+pub async fn query_all_user_info(name: &str, org: i32) -> Vec<User> {}
+
+#[select("
+    SELECT organizations.id, organizations.name
+    FROM organizations
+    JOIN users ON users.org = organizations.id
+    WHERE users.email LIKE '%' || :name || '%'
+    GROUP BY organizations.id
+")]
+#[db("postgres")]
+pub fn query_user_org(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
+
+
+
+#[postgres_select("
+    SELECT organizations.id, organizations.name
+    FROM organizations
+    JOIN users ON users.org = organizations.id
+    WHERE users.email LIKE '%' || :name || '%'
+    GROUP BY organizations.id
+")]
+pub fn query_user_org1(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
+
+
+
+
+
+
+

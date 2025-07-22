@@ -14,7 +14,8 @@ use syn::{AttributeArgs, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, Pa
 use syn::GenericArgument;
 use rust_format::Formatter;
 
-use crate::util::{self, Mode, ValidateQueryResult};
+use crate::parser::{self, Mode, ValidateQueryResult};
+use crate::sqlx_template::Database;
 
 enum QueryType {
     Data,
@@ -115,9 +116,10 @@ fn get_debug_slow(nested_meta: Option<&NestedMeta>) -> syn::Result<i32> {
     Ok(res)
 }
 
-pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> syn::Result<TokenStream> { 
+pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: Option<Database>) -> syn::Result<TokenStream> { 
     let query_string = get_query_string(args.get(0))?; 
     let debug_slow = get_debug_slow(args.get(1))?; 
+    let db = db.unwrap_or_else(|| super::get_database_from_input_fn(&input));
     // Extract the function name and arguments 
     let fn_name = &input.sig.ident; 
     let fn_args = &input.sig.inputs; 
@@ -137,8 +139,8 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
                 syn::FnArg::Receiver(_) => None, 
             } }).collect(); 
     // Validate query 
-    let dialect = super::get_database_dialect(); 
-    let queries = match util::validate_multi_query(&query_string, &param_names, dialect.as_ref()) { 
+    let dialect = super::get_database_dialect(db); 
+    let queries = match parser::validate_multi_query(&query_string, &param_names, dialect.as_ref()) { 
         Ok(r) => r, 
         Err(e) => panic!("{e}"), 
     }; 
@@ -162,7 +164,7 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
         }; 
         queries_gen.push(gen); 
     } 
-    let database = super::get_database(); 
+    let database = super::get_database_type(db); 
     
     let final_gen = if fn_args.is_empty() {
         quote! { 
@@ -182,13 +184,20 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
     let res = super::gen_with_doc(final_gen); 
     Ok(res) }
 
-pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> syn::Result<TokenStream> {
+pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: Option<Database>) -> syn::Result<TokenStream> {
     let query_string = get_query_string(args.first())?;
     let debug_slow = get_debug_slow(args.get(1))?;
+    
+    let db = db.unwrap_or_else(|| super::get_database_from_input_fn(&input));
 
     // Extract the function name and arguments
     let fn_name = &input.sig.ident;
     let fn_args = &input.sig.inputs;
+    let fn_args_with_comma = if fn_args.is_empty() {
+        quote! {}
+    } else {
+        quote! {#fn_args ,}
+    };
     let mut map_args = HashMap::new();
     let mut param_names: Vec<String> = fn_args.iter().filter_map(|arg| {
         match arg {
@@ -206,8 +215,8 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
     }).collect();
 
     // Validate query
-    let dialect = super::get_database_dialect();
-    let ValidateQueryResult {sql, params} = match util::validate_query(&query_string, &param_names, mode, dialect.as_ref()) {
+    let dialect = super::get_database_dialect(db);
+    let ValidateQueryResult {sql, params} = match parser::validate_query(&query_string, &param_names, mode, dialect.as_ref()) {
         Ok(r) => r,
         Err(e) => panic!("{e}"),
     };
@@ -361,7 +370,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
     };
 
     // Choose database by feature
-    let database = super::get_database();
+    let database = super::get_database_type(db);
 
     let binds = if data_type == Some(DataType::Stream) {
         params.iter().map(|field| {
@@ -387,7 +396,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
             match data_type {
                 Some(DataType::Stream) => {
                     quote! {
-                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args, conn: E) -> #output {
+                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
                             #before
@@ -399,7 +408,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                 }
                 _ => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> #output {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
                             #before
@@ -416,7 +425,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
             match data_type {
                 Some(DataType::Stream) => {
                     quote! {
-                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args, conn: E) -> #output {
+                        pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_scalar(sql)#(#binds)*;
                             #before
@@ -428,7 +437,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                 }
                 _ => {
                     quote! {
-                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> #output {
+                        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_scalar(sql)#(#binds)*;
                             #before
@@ -443,7 +452,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
         },
         QueryType::RowAfftected => {
             quote! {
-                pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> #output {
+                pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                     let sql = #sql;
                     let query = sqlx::query(sql)#(#binds)*;
                     #before
@@ -455,7 +464,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
         },
         QueryType::Void => {
             quote! {
-                pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> #output {
+                pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                     let sql = #sql;
                     let query = sqlx::query(sql)#(#binds)*;
                     #before
@@ -469,7 +478,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
         QueryType::Page => {
             let count_query = util::convert_to_count_query(&sql, dialect.as_ref()).unwrap();
             let count_query_fn = quote! {
-                pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, conn: E) -> core::result::Result<i64, sqlx::Error> {
+                pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> core::result::Result<i64, sqlx::Error> {
                     let sql = #count_query;
                     let query = sqlx::query_scalar(sql)#(#binds)*;
                     #before
@@ -501,7 +510,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
                 
             });
             let data_query_fn = quote! {
-                pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args, offset: i64, limit: i32, conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
+                pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma offset: i64, limit: i32, conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
                     let sql = #sql;
                     let query = sqlx::query_as::<_, #return_type>(sql)#(#page_binds)*;
                     #before
@@ -529,7 +538,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>) -> s
             
 
             quote! {
-                pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args, page: impl Into<(i64, i32, bool)>, conn: E) -> #output {
+                pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args_with_comma page: impl Into<(i64, i32, bool)>, conn: E) -> #output {
                     #data_query_fn
 
                     #count_query_fn

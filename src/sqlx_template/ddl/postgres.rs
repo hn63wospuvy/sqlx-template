@@ -1,8 +1,4 @@
-use std::{default, fmt};
-
-use crate::{sqlx_template::{
-    check_fields, gen_with_doc, get_database, get_table_name, has_duplicates,
-}, util};
+use crate::sqlx_template::{gen_with_doc, get_database_type, get_table_name, Database};
 use proc_macro2::TokenStream;
 use quote::quote;
 use sqlparser::dialect::PostgreSqlDialect;
@@ -123,23 +119,8 @@ pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name,);
 
-    let database = get_database();
-
-    let index_creation = indexes
-        .iter()
-        .map(|query| {
-            let print_stmt = do_print_sql(query);
-            quote! {
-                if print_query {
-                    #print_stmt
-                }
-                let _ = sqlx::query(#query).execute(conn).await?;
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let print_stmt = do_print_sql(&create_sql);
-    let index_creation_for_recreate = index_creation.clone();
+    let database = get_database_type(Database::Postgres);
+    
     let create_function_impl = gen_with_doc(quote! {
         pub async fn create_table<'c, E: sqlx::Executor<'c, Database = #database> + Copy>( conn: E, print_query: bool) -> Result<(), sqlx::Error> {
             if print_query {

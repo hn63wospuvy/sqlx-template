@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    ".", "examples/sqlite",
+    ".", "examples/postgres", "examples/sqlite"
 ]
 
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 license = "MIT OR Apache-2.0"
 edition = "2021"
 repository = "https://github.com/hn63wospuvy/sqlx-template"
@@ -24,6 +24,7 @@ edition.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+
 [lib]
 proc-macro = true
 
@@ -36,10 +37,21 @@ sqlparser = "0.47.0"
 sqlformat = "0.2.4"
 rust-format = "0.3"
 once_cell = "1.18"
+
+[dev-dependencies]
+anyhow = "1.0"
+futures = "0.3"
+structopt = "0.3"
+tokio = { version = "1.20.0", features = [ "rt-multi-thread", "macros" ] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres", "macros", "uuid", "chrono"] }
+futures-util = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+
+
+
+
 [features]
-postgres = []
-mysql = []
-sqlite = []
-any = []
 log = []
 tracing = []
+
+

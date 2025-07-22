@@ -1,14 +1,19 @@
-use proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr,
-    Meta, MetaList, MetaNameValue, NestedMeta, Token,
+    parse_macro_input, token::Eq, Attribute, Data, DeriveInput, Field, Fields, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta, Path, Token
 };
 
-use super::get_table_name;
+use crate::sqlx_template::{get_database_from_ast, Database};
 
-pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
+use super::{get_table_name, Scope};
+
+pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let struct_name = &ast.ident;
+    let struct_name = match for_path {
+        Some(path) => quote! {#path},
+        None => quote! {#struct_name},
+    };
     let mut fields = vec![];
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
     if let syn::Data::Struct(syn::DataStruct {
@@ -32,10 +37,10 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
     }
 
     let table_name = get_table_name(&ast);
-
+    let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
     let sql_fields = fields
         .iter()
-        .map(|f| f.to_string())
+        .map(|f| super::check_column_name(f.to_string(), db))
         .collect::<Vec<_>>()
         .join(", ");
     let sql_placeholders = (1..=fields.len())
@@ -43,15 +48,13 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "INSERT INTO {}({}) VALUES ({})",
-        table_name, sql_fields, sql_placeholders
+        "INSERT INTO {table_name}({sql_fields}) VALUES ({sql_placeholders})"
     );
-
+    super::check_valid_single_sql(&sql, db);
     let sql_return = format!(
-        "INSERT INTO {}({}) VALUES ({}) RETURNING *",
-        table_name, sql_fields, sql_placeholders
+        "INSERT INTO {table_name}({sql_fields}) VALUES ({sql_placeholders}) RETURNING *"
     );
-
+    
     let binds = fields.iter().map(|field| {
         quote! {
             .bind(&re.#field)
@@ -60,7 +63,7 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
 
     let binds_return = binds.clone();
 
-    let database = super::get_database();
+    let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
     let insert = quote! {
         pub async fn insert<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> Result<u64, sqlx::Error> {
@@ -76,8 +79,9 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
     };
     let insert = super::gen_with_doc(insert);
 
-    #[cfg(feature = "postgres")]
-    let insert_returning = {
+    
+    let insert_returning = if matches!(db, Database::Postgres) {
+        super::check_valid_single_sql(&sql_return, db);
         let insert_returning = quote! {
             pub async fn insert_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> Result<#struct_name, sqlx::Error> {
                 let sql = #sql_return;
@@ -91,116 +95,34 @@ pub fn derive_insert(ast: DeriveInput) -> syn::Result<TokenStream> {
             }
         };
         super::gen_with_doc(insert_returning)
-    };
-
-    let insert_collection = if cfg!(feature = "postgres") {
-
-        let num_fields = fields.len();
-
-        let field_idents = fields
-            .iter()
-            .map(|f| {
-                let name = f;
-                quote! { &record.#name }
-            })
-            .collect::<Vec<_>>();
-
-        let insert_collection = quote! {
-            pub async fn insert_all<'c, E: sqlx::Executor<'c, Database = #database>>(records: &[#struct_name], conn: E) -> Result<u64, sqlx::Error> {
-
-                if records.is_empty() {
-                    return Ok(0);
-                }
-
-                let placeholders: Vec<String> = (0..records.len())
-                    .map(|row_idx| {
-                        let row_placeholders: Vec<String> = (1..=#num_fields)
-                            .map(|col_idx| format!("${}", row_idx * #num_fields + col_idx))
-                            .collect();
-                        format!("({})", row_placeholders.join(", "))
-                    })
-                    .collect();
-
-                #dbg_before
-                let sql = format!(
-                    "INSERT INTO {} ({}) VALUES {}",
-                    #table_name,
-                    #sql_fields,
-                    placeholders.join(", ")
-                );
-
-                let mut query = sqlx::query(&sql);
-                for record in records {
-                    query = query #(.bind(#field_idents))*
-                }
-
-                let result = query.execute(conn).await;
-                #dbg_after
-
-                Ok(result?.rows_affected())
-
-            }
-        };
-        super::gen_with_doc(insert_collection)
-    } else if cfg!(any(feature = "mysql", feature = "sqlite")) {
-        let sql_placeholders_question_mark = format!(
-            "({})",
-            (0..fields.len())
-                .map(|_| "?".to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-
-        let field_idents = fields
-            .iter()
-            .map(|f| {
-                let name = f;
-                quote! { &record.#name }
-            })
-            .collect::<Vec<_>>();
-
-        let insert_collection = quote! {
-             pub async fn insert_all<'c, E: sqlx::Executor<'c, Database = #database >>(records: &[#struct_name], conn: E)-> Result<u64, sqlx::Error> {
-
-                let sql = format!(
-                    "INSERT INTO {} ({}) VALUES {}",
-                    #table_name,
-                    &#sql_fields,
-                    &(0..records.len()).map(|_| #sql_placeholders_question_mark.clone()).collect::<Vec<_>>().join(", "));
-
-
-                let mut query = sqlx::query(&sql);
-                #dbg_before
-                for record in records {
-                    query = query #(.bind(#field_idents))*
-                }
-                let result = query.execute(conn).await;
-                #dbg_after
-
-                Ok(result?.rows_affected())
-            }
-        };
-
-        super::gen_with_doc(insert_collection)
     } else {
-        panic!("Only support insert_all for postgres, mysql, sqlite");
+        quote! {}
     };
 
-    #[cfg(not(feature = "postgres"))]
-    let insert_returning = quote! {};
-    // #[cfg(not(feature = "postgres"))]
-    // let insert_collection = quote! {};
-    // #[cfg(not(feature = "mysql"))]
-    // let insert_collection = quote! {};
-    let gen = quote! {
-        impl #struct_name {
 
+    let gen = match scope {
+        Scope::Struct => quote! {
+            impl #struct_name {
+                #insert
+
+                #insert_returning
+            }
+        },
+        Scope::Mod => quote! {
             #insert
 
             #insert_returning
+        },
+        super::Scope::NewMod => {
+            let new_mod = super::create_ident(&table_name);
+            quote! {
+                pub mod #new_mod {
+                    #insert
 
-            #insert_collection
-        }
+                    #insert_returning
+                }
+            }
+        },
     };
 
     Ok(gen.into())
