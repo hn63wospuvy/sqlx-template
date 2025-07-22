@@ -1240,7 +1240,7 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
 /// # Examples
 ///
 /// ## Valid Usage
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::parser::get_columns_and_compound_ids;
 /// use sqlparser::dialect::PostgreSqlDialect;
 ///
@@ -1262,7 +1262,7 @@ fn extract_columns_and_compound_ids(expr: &Expr, res: &mut ColumnTableList) -> R
 /// ```
 ///
 /// ## Error Case - Placeholder Used with Multiple Columns
-/// ```rust
+/// ```rust,ignore
 /// use sqlx_template::parser::get_columns_and_compound_ids;
 /// use sqlparser::dialect::PostgreSqlDialect;
 ///

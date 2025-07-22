@@ -43,7 +43,7 @@ pub mod builder {
 
 ```rust
 pub async fn insert<'c, E: sqlx::Executor<'c, Database = sqlx::Sqlite>>(
-    re: &Userrrrr,
+    re: &Userrrrr1111,
     conn: E,
 ) -> Result<u64, sqlx::Error> {
     let sql = "INSERT INTO users(id) VALUES ($1)";
@@ -68,9 +68,9 @@ pub async fn insert<'c, E: sqlx::Executor<'c, Database = sqlx::Sqlite>>(
 ```rust
 pub async fn find_all<'c, E: sqlx::Executor<'c, Database = sqlx::Sqlite>>(
     conn: E,
-) -> Result<Vec<Userrrrr>, sqlx::Error> {
+) -> Result<Vec<Userrrrr1111>, sqlx::Error> {
     let sql = "SELECT id FROM users";
-    let query_result = sqlx::query_as::<_, Userrrrr>(sql).fetch_all(conn).await;
+    let query_result = sqlx::query_as::<_, Userrrrr1111>(sql).fetch_all(conn).await;
     Ok(query_result?)
 }
 
@@ -107,14 +107,14 @@ pub async fn count_all<'c, E: sqlx::Executor<'c, Database = sqlx::Sqlite>>(
 pub async fn find_page_all<'c, E: sqlx::Executor<'c, Database = sqlx::Sqlite> + Copy>(
     page: impl Into<(i64, i32, bool)>,
     conn: E,
-) -> Result<(Vec<Userrrrr>, Option<i64>), sqlx::Error> {
+) -> Result<(Vec<Userrrrr1111>, Option<i64>), sqlx::Error> {
     async fn data_query<'c, E: sqlx::Executor<'c, Database = sqlx::Sqlite>>(
         offset: i64,
         limit: i32,
         conn: E,
-    ) -> Result<Vec<Userrrrr>, sqlx::Error> {
+    ) -> Result<Vec<Userrrrr1111>, sqlx::Error> {
         let sql = "SELECT id FROM users LIMIT $1 OFFSET $2";
-        let query_result = sqlx::query_as::<_, Userrrrr>(sql)
+        let query_result = sqlx::query_as::<_, Userrrrr1111>(sql)
             .bind(limit)
             .bind(offset)
             .fetch_all(conn)

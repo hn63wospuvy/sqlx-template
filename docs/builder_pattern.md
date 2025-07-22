@@ -63,7 +63,22 @@ For each field, the builder generates:
 
 ### SELECT Builder
 
-```rust
+```rust,no_run
+# use sqlx_template::SqliteTemplate;
+# use sqlx::{FromRow, SqlitePool};
+# #[derive(SqliteTemplate, FromRow, Debug, Clone)]
+# #[table("users")]
+# #[tp_select_builder(
+#     with_email_domain = "email LIKE :domain$String",
+#     with_score_range = "score BETWEEN :min$i32 AND :max$i32"
+# )]
+# pub struct User {
+#     pub id: i32,
+#     pub email: String,
+#     pub score: i32,
+# }
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+# let pool = SqlitePool::connect(":memory:").await?;
 let users = User::builder_select()
     .email("john@example.com")?           // Field-based condition
     .score_gte(&75)?                      // Generated comparison method
@@ -72,11 +87,29 @@ let users = User::builder_select()
     .order_by_score_desc()?               // Generated ORDER BY method
     .find_all(&pool)
     .await?;
+# Ok(())
+# }
 ```
 
 ### UPDATE Builder
 
-```rust
+```rust,no_run
+# use sqlx_template::SqliteTemplate;
+# use sqlx::{FromRow, SqlitePool};
+# #[derive(SqliteTemplate, FromRow, Debug, Clone)]
+# #[table("users")]
+# #[tp_update_builder(
+#     with_high_score = "score > :threshold$i32"
+# )]
+# pub struct User {
+#     pub id: i32,
+#     pub email: String,
+#     pub active: bool,
+#     pub score: i32,
+# }
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+# let pool = SqlitePool::connect(":memory:").await?;
+# let user_id = 1;
 let affected = User::builder_update()
     .on_email("newemail@example.com")?    // SET email = ?
     .on_active(&true)?                    // SET active = ?
@@ -84,16 +117,34 @@ let affected = User::builder_update()
     .with_high_score(80)?                 // Custom WHERE condition
     .execute(&pool)
     .await?;
+# Ok(())
+# }
 ```
 
 ### DELETE Builder
 
-```rust
+```rust,no_run
+# use sqlx_template::SqliteTemplate;
+# use sqlx::{FromRow, SqlitePool};
+# #[derive(SqliteTemplate, FromRow, Debug, Clone)]
+# #[table("users")]
+# #[tp_delete_builder(
+#     with_old_accounts = "created_at < :cutoff$String"
+# )]
+# pub struct User {
+#     pub id: i32,
+#     pub active: bool,
+#     pub created_at: String,
+# }
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+# let pool = SqlitePool::connect(":memory:").await?;
 let deleted = User::builder_delete()
     .active(&false)?                      // WHERE active = false
     .with_old_accounts("2023-01-01")?     // Custom WHERE condition
     .execute(&pool)
     .await?;
+# Ok(())
+# }
 ```
 
 ## Validation
