@@ -249,11 +249,17 @@ pub fn derive_update(
                         .iter()
                         .enumerate()
                         .map(|(index, field)| {
-                            format!(
-                                "{} = ${}",
-                                get_field_name_as_column(field, db),
-                                index + 1
-                            )
+                            match db {
+                                Database::Postgres => format!(
+                                    "{} = ${}",
+                                    get_field_name_as_column(field, db),
+                                    index + 1
+                                ),
+                                Database::Sqlite | Database::Mysql | Database::Any => format!(
+                                    "{} = ?",
+                                    get_field_name_as_column(field, db)
+                                ),
+                            }
                         })
                         .collect::<Vec<_>>();
                     if version_fields.len() > 0 {
@@ -268,17 +274,26 @@ pub fn derive_update(
                         .iter()
                         .enumerate()
                         .map(|(index, field)| {
-                            format!(
-                                "{} = ${}",
-                                get_field_name_as_column(field, db),
-                                index + current_idx + 1
-                            )
+                            match db {
+                                Database::Postgres => format!(
+                                    "{} = ${}",
+                                    get_field_name_as_column(field, db),
+                                    index + current_idx + 1
+                                ),
+                                Database::Sqlite | Database::Mysql | Database::Any => format!(
+                                    "{} = ?",
+                                    get_field_name_as_column(field, db)
+                                ),
+                            }
                         })
                         .collect::<Vec<_>>();
                     if version_fields.len() > 0 {
                         let version_field = version_fields.get(0).unwrap();
                         let arg_name = get_field_name_as_column(version_field, db);
-                        let stmt = format!("{arg_name} = ${}", by_fields.len() + current_idx + 1);
+                        let stmt = match db {
+                            Database::Postgres => format!("{arg_name} = ${}", by_fields.len() + current_idx + 1),
+                            Database::Sqlite | Database::Mysql | Database::Any => format!("{arg_name} = ?"),
+                        };
                         where_stmt.push(stmt);
                     }
                     let set_binds = set_fields.iter().map(|field| {
@@ -399,10 +414,11 @@ pub fn derive_update(
                             fn_args.append(&mut args_vec);
                             binds.append(&mut bind_vec);
                             let start_counter = by_fields.len() + set_fields.len() + 1;
-                            let (sql, params) = parser::replace_placeholder(
+                            let (sql, params) = parser::replace_placeholder_with_db(
                                 &where_stmt_str,
                                 par_res.placeholder_vars,
                                 Some(start_counter as i32),
+                                db,
                             );
                             where_stmt.push(sql);
                         } else {
@@ -716,10 +732,11 @@ pub fn derive_update(
                             fn_args.append(&mut args_vec);
                             binds.append(&mut bind_vec);
                             let start_counter = by_fields.len() + on_fields.len() + 1;
-                            let (sql, params) = parser::replace_placeholder(
+                            let (sql, params) = parser::replace_placeholder_with_db(
                                 &where_stmt_str,
                                 par_res.placeholder_vars,
                                 Some(start_counter as i32),
+                                db,
                             );
                             where_stmt.push(sql);
                         } else {

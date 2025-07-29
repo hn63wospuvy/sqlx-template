@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    ".", "examples/postgres", "examples/sqlite"
+    ".", "examples/postgres", "examples/sqlite", "examples/mysql"
 ]
 
 

@@ -307,7 +307,10 @@ fn build_default_find_page_all_query(
         .map(|x| get_field_name_as_column(x, db))
         .collect::<Vec<String>>();
     let all_fields_str = all_fields_str.join(", ");
-    let sql = format!("SELECT {all_fields_str} FROM {table_name} LIMIT $1 OFFSET $2");
+    let sql = match db {
+        Database::Postgres => format!("SELECT {all_fields_str} FROM {table_name} LIMIT $1 OFFSET $2"),
+        Database::Sqlite | Database::Mysql | Database::Any => format!("SELECT {all_fields_str} FROM {table_name} LIMIT ? OFFSET ?"),
+    };
     super::check_valid_single_sql(&sql, db);
     let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
     let expanded = quote! {
@@ -489,12 +492,18 @@ fn build_query(
                 }
                 SelectType::Page => {
                     let total_binds_args = by_fields.len();
-                    let paging_sql = format!(
-                        "{} LIMIT ${} OFFSET ${} ",
-                        sql,
-                        total_binds_args + 1,
-                        total_binds_args + 2
-                    );
+                    let paging_sql = match db {
+                        Database::Postgres => format!(
+                            "{} LIMIT ${} OFFSET ${} ",
+                            sql,
+                            total_binds_args + 1,
+                            total_binds_args + 2
+                        ),
+                        Database::Sqlite | Database::Mysql | Database::Any => format!(
+                            "{} LIMIT ? OFFSET ? ",
+                            sql
+                        ),
+                    };
                     let mut total_binds = vec![];
                     total_binds.push(quote! {
                         .bind(paging_limit)
@@ -634,11 +643,17 @@ fn build_query(
                 .iter()
                 .enumerate()
                 .map(|(index, field)| {
-                    format!(
-                        "{} = ${}",
-                        get_field_name_as_column(field, db),
-                        index + 1
-                    )
+                    match db {
+                        Database::Postgres => format!(
+                            "{} = ${}",
+                            get_field_name_as_column(field, db),
+                            index + 1
+                        ),
+                        Database::Sqlite | Database::Mysql | Database::Any => format!(
+                            "{} = ?",
+                            get_field_name_as_column(field, db)
+                        ),
+                    }
                 })
                 .collect::<Vec<_>>();
             let mut binds = by_fields
@@ -768,10 +783,11 @@ fn build_query(
                     fn_args.append(&mut args_vec);
                     binds.append(&mut bind_vec);
                     let start_counter = by_fields.len() + 1;
-                    let (sql, params) = parser::replace_placeholder(
+                    let (sql, params) = parser::replace_placeholder_with_db(
                         &where_stmt_str,
                         par_res.placeholder_vars,
                         Some(start_counter as i32),
+                        db,
                     );
                     where_condition.push(sql);
                 } else {
@@ -843,12 +859,18 @@ fn build_query(
                 }
                 SelectType::Page => {
                     let total_binds_args = by_fields.len();
-                    let paging_sql = format!(
-                        "{} LIMIT ${} OFFSET ${} ",
-                        sql,
-                        total_binds_args + 1,
-                        total_binds_args + 2
-                    );
+                    let paging_sql = match db {
+                        Database::Postgres => format!(
+                            "{} LIMIT ${} OFFSET ${} ",
+                            sql,
+                            total_binds_args + 1,
+                            total_binds_args + 2
+                        ),
+                        Database::Sqlite | Database::Mysql | Database::Any => format!(
+                            "{} LIMIT ? OFFSET ? ",
+                            sql
+                        ),
+                    };
                     let mut total_binds = binds;
                     let mut total_binds_for_count = total_binds.clone();
                     total_binds.push(quote! {

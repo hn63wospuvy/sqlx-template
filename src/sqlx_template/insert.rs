@@ -43,10 +43,16 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
         .map(|f| super::check_column_name(f.to_string(), db))
         .collect::<Vec<_>>()
         .join(", ");
-    let sql_placeholders = (1..=fields.len())
-        .map(|i| format!("${}", i))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let sql_placeholders = match db {
+        Database::Postgres => (1..=fields.len())
+            .map(|i| format!("${}", i))
+            .collect::<Vec<_>>()
+            .join(", "),
+        Database::Sqlite | Database::Mysql | Database::Any => (1..=fields.len())
+            .map(|_| "?".to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
     let sql = format!(
         "INSERT INTO {table_name}({sql_fields}) VALUES ({sql_placeholders})"
     );

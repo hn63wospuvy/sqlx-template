@@ -243,10 +243,16 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     .map(|f| super::check_column_name(f.to_string(), db))
                     .collect::<Vec<_>>()
                     .join(", ");
-                let insert_placeholders = (1..=insert_fields.len())
-                    .map(|i| format!("${}", i))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let insert_placeholders = match db {
+                    Database::Postgres => (1..=insert_fields.len())
+                        .map(|i| format!("${}", i))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    Database::Sqlite | Database::Mysql | Database::Any => (1..=insert_fields.len())
+                        .map(|_| "?".to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                };
 
                 let conflict_field_stmt = by_fields
                     .iter()
@@ -375,7 +381,8 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                                 .filter(|x| !not_excluded_fields.contains(&x.to_string()))
                                 .map(|x| {
                                     let column = check_column_name(x.to_string(), db);
-                                    format!(" {column} = VALUES({x})")
+                                    let values_column = check_column_name(x.to_string(), db);
+                                    format!(" {column} = VALUES({values_column})")
                                 })
                                 .collect::<Vec<_>>()
                                 ;
@@ -397,8 +404,9 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                                 })
                                 .map(|x| {
                                     let field_name = get_field_name(x);
-                                    let x = get_field_name_as_column(x, db);
-                                    format!(" {x} = VALUES({field_name})")
+                                    let column = get_field_name_as_column(x, db);
+                                    let values_column = check_column_name(field_name.clone(), db);
+                                    format!(" {column} = VALUES({values_column})")
                                 })
                                 .collect::<Vec<_>>()
                                 ;
@@ -514,7 +522,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                             }
 
                             let start_counter = insert_fields.len() + 1;
-                            let (processed_sql, _) = parser::replace_placeholder(&where_sql, par_res.placeholder_vars, Some(start_counter as i32));
+                            let (processed_sql, _) = parser::replace_placeholder_with_db(&where_sql, par_res.placeholder_vars, Some(start_counter as i32), db);
                             where_sql = processed_sql;
                         }
 

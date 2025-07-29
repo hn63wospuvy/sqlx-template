@@ -379,7 +379,7 @@ pub fn get_database_type(db: Database) -> TokenStream {
     match db {
         Database::Postgres => quote! { sqlx::Postgres },
         Database::Sqlite => quote! { sqlx::Sqlite },
-        Database::Mysql => quote! { sqlx::Mysql },
+        Database::Mysql => quote! { sqlx::MySql },
         Database::Any => quote! { sqlx::Any },
     }
 

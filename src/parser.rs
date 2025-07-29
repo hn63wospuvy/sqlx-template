@@ -47,6 +47,10 @@ pub fn format_sql(sql: &str, dialect: &dyn Dialect) -> Result<String, String> {
 }
 
 pub fn convert_to_page_query(sql: &str, dialect: &dyn Dialect, params: &Vec<String>) -> Result<ValidateQueryResult, String> {
+    convert_to_page_query_with_db(sql, dialect, params, crate::sqlx_template::Database::Postgres)
+}
+
+pub fn convert_to_page_query_with_db(sql: &str, dialect: &dyn Dialect, params: &Vec<String>, db: crate::sqlx_template::Database) -> Result<ValidateQueryResult, String> {
     let mut ast = Parser::parse_sql(dialect, sql).map_err(|x| format!("Parse SQL error. May be due to improperly syntax"))?;
 
     if ast.len() != 1 {
@@ -62,14 +66,14 @@ pub fn convert_to_page_query(sql: &str, dialect: &dyn Dialect, params: &Vec<Stri
                 if query.limit.is_some() {
                     return Err("Query has LIMIT statement".into())
                 }
-                query.offset.replace(Offset { 
-                    value: Expr::Value(Value::Placeholder(":offset".to_string())), 
-                    rows: OffsetRows::None 
+                query.offset.replace(Offset {
+                    value: Expr::Value(Value::Placeholder(":offset".to_string())),
+                    rows: OffsetRows::None
                 });
                 query.limit.replace(Expr::Value(Value::Placeholder(":limit".to_string())));
                 let sql = ast[0].to_string();
 
-                return validate_query(&sql, params, Some(Mode::Select), dialect)
+                return validate_query_with_db(&sql, params, Some(Mode::Select), dialect, db)
             } else {
                 Err("Unsupported query type".into())
             }
@@ -118,6 +122,10 @@ pub fn convert_to_count_query(sql: &str, dialect: &dyn Dialect) -> Result<String
 }
 
 fn validate_statement(statement: Statement, params: &Vec<String>, mode: Option<Mode>) -> Result<ValidateQueryResult, String> {
+    validate_statement_with_db(statement, params, mode, crate::sqlx_template::Database::Postgres)
+}
+
+fn validate_statement_with_db(statement: Statement, params: &Vec<String>, mode: Option<Mode>, db: crate::sqlx_template::Database) -> Result<ValidateQueryResult, String> {
     let mut res = vec![];
     from_statement(&statement, &mut res)?; // Could do better by using trait and impl trait for every struct in sqlparser::ast
     for placeholer in res.as_slice() {
@@ -126,15 +134,24 @@ fn validate_statement(statement: Statement, params: &Vec<String>, mode: Option<M
         }
     }
     let sql = statement.to_string();
-    let (sql, params) = replace_placeholder(&sql, res, None);
+    let (sql, params) = replace_placeholder_with_db(&sql, res, None, db);
     Ok(ValidateQueryResult { sql, params })
 }
 
 pub fn validate_multi_query(sql: &str, params: &Vec<String>, dialect: &dyn Dialect) -> Result<Vec<ValidateQueryResult>, String> {
-    let mut statements = Parser::parse_sql(dialect, sql).map_err(|x| format!("Parse SQL error. May be due to improperly syntax"))?;
-    statements.into_iter().map(|statement| validate_statement(statement, params, None)).collect()
+    validate_multi_query_with_db(sql, params, dialect, crate::sqlx_template::Database::Postgres)
 }
+
+pub fn validate_multi_query_with_db(sql: &str, params: &Vec<String>, dialect: &dyn Dialect, db: crate::sqlx_template::Database) -> Result<Vec<ValidateQueryResult>, String> {
+    let mut statements = Parser::parse_sql(dialect, sql).map_err(|x| format!("Parse SQL error. May be due to improperly syntax"))?;
+    statements.into_iter().map(|statement| validate_statement_with_db(statement, params, None, db)).collect()
+}
+
 pub fn validate_query(sql: &str, params: &Vec<String>, mode: Option<Mode>, dialect: &dyn Dialect) -> Result<ValidateQueryResult, String> {
+    validate_query_with_db(sql, params, mode, dialect, crate::sqlx_template::Database::Postgres)
+}
+
+pub fn validate_query_with_db(sql: &str, params: &Vec<String>, mode: Option<Mode>, dialect: &dyn Dialect, db: crate::sqlx_template::Database) -> Result<ValidateQueryResult, String> {
     let mut statements = Parser::parse_sql(dialect, sql).map_err(|x| format!("Parse SQL error. May be due to improperly syntax"))?;
     if statements.len() != 1 {
         return Err("Only one statement is allowed".to_string())
@@ -147,20 +164,27 @@ pub fn validate_query(sql: &str, params: &Vec<String>, mode: Option<Mode>, diale
         sqlparser::ast::Statement::Delete(_) => if mode.is_some() && mode != Some(Mode::Delete) {return Err("Delete statement is allowed here".to_string())},
         _ => if mode.is_some() {return Err("Only Select, Insert, Update, Delete statement is allowed".to_string())}
     }
-    validate_statement(statement, params, mode)
+    validate_statement_with_db(statement, params, mode, db)
 }
 
 
 pub(crate) fn replace_placeholder(s: &str, placeholder: Vec<String>, start_counter: Option<i32>) -> (String, Vec<String>) {
+    replace_placeholder_with_db(s, placeholder, start_counter, crate::sqlx_template::Database::Postgres)
+}
+
+pub(crate) fn replace_placeholder_with_db(s: &str, placeholder: Vec<String>, start_counter: Option<i32>, db: crate::sqlx_template::Database) -> (String, Vec<String>) {
     let mut result = String::from(s);
     let mut keyword_order = Vec::new();
     let mut counter = start_counter.unwrap_or(1);
 
     for keyword in placeholder {
         while let Some(pos) = result.find(&keyword) {
-            let placeholder = format!("${}", counter);
+            let placeholder_str = match db {
+                crate::sqlx_template::Database::Postgres => format!("${}", counter),
+                crate::sqlx_template::Database::Sqlite | crate::sqlx_template::Database::Mysql | crate::sqlx_template::Database::Any => "?".to_string(),
+            };
             keyword_order.push(keyword.clone());
-            result.replace_range(pos..pos + keyword.len(), &placeholder);
+            result.replace_range(pos..pos + keyword.len(), &placeholder_str);
             counter += 1;
         }
     }

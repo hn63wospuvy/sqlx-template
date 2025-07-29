@@ -1,34 +1,42 @@
-
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use sqlx_template::{insert, multi_query, query, select, update, Columns, DeleteTemplate, SelectTemplate, SqliteTemplate, TableName, UpdateTemplate, UpsertTemplate};
-use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
+use sqlx_template::{insert, multi_query, mysql_delete, mysql_select, query, select, update, Columns, DeleteTemplate, MysqlTemplate, SelectTemplate, SqlxTemplate, TableName, UpdateTemplate, UpsertTemplate};
+use sqlx::{prelude::FromRow, types::{chrono, Json}, MySql, MySqlPool};
 use sqlx_template::InsertTemplate;
+use testcontainers_modules::{mysql, testcontainers::{runners::AsyncRunner, ImageExt}};
 
-// const DB_URL: &str = "sqlite://sqlite.db";
-const DB_URL: &str = "sqlite::memory:";
 
 #[tokio::main]
 async fn main() {
-    let fresh = if !Sqlite::database_exists(DB_URL).await.unwrap_or(false) || DB_URL.contains("memory") {
-        println!("Creating database {}", DB_URL);
-        match Sqlite::create_database(DB_URL).await {
-            Ok(_) => {
-                println!("Create db success");
-                true
-            },
-            Err(error) => panic!("error: {}", error),
-        }
-    } else {
-        println!("Database already exists");
-        false
-    };
 
-    let db = SqlitePool::connect(DB_URL).await.unwrap();
-    if fresh {
-        // Run migration script when db is newly created
-        migrate(&db).await.unwrap();
-    }
+    const USERNAME: &str = "root";
+    const PASSWORD: &str = "password";
+    const DATABASE: &str = "testdb";
+
+    // Start MySQL container
+    let mysql_container = mysql::Mysql::default()
+        .with_env_var("MYSQL_ROOT_PASSWORD", PASSWORD)
+        .with_env_var("MYSQL_DATABASE", DATABASE)
+        .start()
+        .await
+        .expect("Failed to start MySQL container");
+
+    let host = mysql_container.get_host().await.expect("Failed to get host");
+    let port = mysql_container.get_host_port_ipv4(3306).await.expect("Failed to get port");
+
+    let connection_string = format!(
+        "mysql://{}:{}@{}:{}/{}",
+        USERNAME, PASSWORD, host, port, DATABASE
+    );
+
+    println!("Connecting to MySQL: {}", connection_string);
+
+    // Connect to MySQL
+    let db = MySqlPool::connect(&connection_string).await.unwrap();
+    
+    // Run migration script
+    migrate(&db).await.unwrap();
+    println!("Setup db done");
 
     let org_1 = Organization {
         name: "org1".into(),
@@ -70,8 +78,10 @@ async fn main() {
     let users = query_all_user_info("user", 0, &db).await.unwrap();
     println!("Query Users: {users:#?}");
 
-    // Stream all users order by id
+    // Find one user by group (should be None since no group is set)
+    let user = User::find_one_by_group(&None, &db).await.unwrap();
 
+    // Stream all users order by id
     let mut users = User::stream_order_by_id_desc(&db);
     while let Some(Ok(u)) = users.next().await {
         println!("Stream User: {u:#?}");
@@ -110,87 +120,24 @@ async fn main() {
     user.updated_by = Some("abc".into());
     User::update_user(&user.id, &user, &mut *tx).await.unwrap();
 
-    // Test upsert functionality
-    let upsert_user = User {
-        email: "user3@abc.com".to_string(),
-        password: "upsert_password".to_string(),
-        org: Some(org.id),
-        active: true,
-        updated_at: Some(Utc::now()),
-        ..Default::default()
-    };
 
-    // This will insert since user3@abc.com doesn't exist
-    User::upsert_by_email(&upsert_user, &mut *tx).await.unwrap();
-
-    // This will update since user3@abc.com now exists
-    let mut updated_upsert_user = upsert_user.clone();
-    updated_upsert_user.password = "updated_upsert_password".to_string();
-    User::upsert_by_email(&updated_upsert_user, &mut *tx).await.unwrap();
+    User::upsert_by_email(&user,  &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning(&user.id, &user, &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning_id(&user.id, &user, &mut *tx).await.unwrap();
+    let mut user_updated_stream = User::update_user_returning_id_email(&user.id, &user, &mut *tx).await.unwrap();
 
     tx.commit().await.unwrap();
+
+    
+    // Note: update_user_returning_stream doesn't exist, using update_user_returning instead
+    let updated_user = User::update_user_returning(&user.id, &user, &db).await.unwrap();
+    println!("Updated user: {updated_user:#?}");
 
     let user = User::find_one_by_email(&"user2@abc.com".to_string(), &db).await.unwrap().unwrap();
     println!("User after update: {user:#?}");
 
-    let upserted_user = User::find_one_by_email(&"user3@abc.com".to_string(), &db).await.unwrap().unwrap();
-    println!("Upserted user: {upserted_user:#?}");
-
-    // Test new WHERE clause functions
-    println!("\n=== Testing WHERE clause functions ===");
-
-    // Test 1: SELECT with WHERE only (email and active mapping)
-    println!("1. Testing find_by_email_and_active:");
-    let user = User::find_by_email_and_active("user1@abc.com", &true, &db).await.unwrap();
-    println!("   Found user: {:?}", user.map(|u| format!("{}({})", u.email, u.active)));
-
-    // Test 2: SELECT with BY + WHERE (org mapping + version custom type)
-    println!("2. Testing find_active_by_org_and_version:");
-    let users = User::find_active_by_org_and_version(&Some(org_1.id), &true, &0, &db).await.unwrap();
-    println!("   Found {} active users in org {} with version > 0", users.len(), org_1.id);
-
-    // Test 3: COUNT with WHERE (custom type)
-    println!("3. Testing count_recent_users:");
-    let count = User::count_recent_users(&"2020-01-01T00:00:00Z".to_string(), &db).await.unwrap();
-    println!("   Found {} users created after 2020-01-01", count);
-
-    // Test 4: UPDATE with WHERE (active mapping)
-    println!("4. Testing update_password_if_active:");
-    let rows = User::update_password_if_active("user2@abc.com", "new_secure_password", &true, &db).await.unwrap();
-    println!("   Updated {} active users' passwords", rows);
-
-    // Test 5: DELETE with WHERE (active mapping + version custom type)
-    println!("5. Testing delete_old_inactive:");
-    let rows = User::delete_old_inactive(&false, &999, &db).await.unwrap();
-    println!("   Deleted {} old inactive users", rows);
-
-    // Test 6: UPSERT with WHERE (version custom type)
-    println!("6. Testing upsert_if_version_below:");
-    let test_user = User {
-        id: 999,
-        email: "test@example.com".to_string(),
-        password: "test_password".to_string(),
-        org: Some(org_1.id),
-        active: true,
-        version: 1,
-        created_by: Some("test".to_string()),
-        created_at: chrono::Utc::now(),
-        updated_by: None,
-        updated_at: None,
-    };
-    let rows = User::upsert_if_version_below(&test_user, &10, &db).await.unwrap();
-
-    
-
-    println!("   Upserted {} users with version < 10", rows);
-
-    let mut builder = User::builder_select();
-    let users = builder.email_like("%example%").unwrap().find_page((0, 10, true), &db).await.unwrap();
-    println!("   Found {} users with email like %example%", users.0.len());
-    println!("=== All WHERE clause tests completed! ===");
-
     // ========== BUILDER PATTERN EXAMPLES ==========
-    println!("\n=== SQLITE BUILDER PATTERN EXAMPLES ===");
+    println!("\n=== MYSQL BUILDER PATTERN EXAMPLES ===");
 
     // Example 1: Simple find_all with single condition
     println!("\n1. Find all active users:");
@@ -203,9 +150,9 @@ async fn main() {
     println!("\n2. Find users with multiple conditions (active=true AND org=1):");
     let filtered_users = User::builder_select()
         .active(&true).unwrap()
-        .org(&Some(org_1.id)).unwrap()
+        .org(&Some(1)).unwrap()
         .find_all(&db).await.unwrap();
-    println!("Found {} users with org={} and active=true", filtered_users.len(), org_1.id);
+    println!("Found {} users with org=1 and active=true", filtered_users.len());
 
     // Example 3: Find_all with string conditions
     println!("\n3. Find users by email pattern:");
@@ -262,14 +209,14 @@ async fn main() {
 
     // Example 8: Stream with conditions
     println!("\n8. Stream users with conditions:");
-    let org_ref = Some(org_1.id);
+    let org_ref = Some(1);
     let mut builder = User::builder_select()
         .active(&true).unwrap()
         .org(&org_ref).unwrap()
         .order_by_email_asc().unwrap();
     let mut user_stream = builder.stream(&db).await;
 
-    println!("Streaming users (active=true, org={}, ordered by email):", org_1.id);
+    println!("Streaming users (active=true, org=1, ordered by email):");
     let mut count = 0;
     while let Some(user_result) = user_stream.next().await {
         match user_result {
@@ -293,9 +240,9 @@ async fn main() {
     println!("\n10. Count users with conditions:");
     let user_count = User::builder_select()
         .active(&true).unwrap()
-        .org(&Some(org_1.id)).unwrap()
+        .org(&Some(1)).unwrap()
         .count(&db).await.unwrap();
-    println!("Total count of active users in org {}: {}", org_1.id, user_count);
+    println!("Total count of active users in org 1: {}", user_count);
 
     // Example 11: Multiple string conditions
     println!("\n11. Find users with email starting with 'user':");
@@ -308,7 +255,7 @@ async fn main() {
 
     // Example 12: Build SQL without executing
     println!("\n12. Build SQL query without executing:");
-    let org_ref2 = Some(org_1.id);
+    let org_ref2 = Some(1);
     let query_builder = User::builder_select()
         .active(&true).unwrap()
         .org(&org_ref2).unwrap()
@@ -317,51 +264,39 @@ async fn main() {
     let sql = query_builder.build_sql();
     println!("Generated SQL: {}", sql);
 
-    // Example 13: Custom conditions with builder
-    println!("\n13. Custom conditions - users with email domain:");
-    let domain_users = User::builder_select()
-        .active(&true).unwrap()
-        .with_email_domain("@abc.com").unwrap()
-        .order_by_id_asc().unwrap()
-        .find_all(&db).await.unwrap();
-    println!("Found {} users with @abc.com domain", domain_users.len());
-
-    // Example 14: Custom condition - version range filtering
-    println!("\n14. Custom condition - version range filtering:");
-    let version_users = User::builder_select()
-        .with_score_range(0, 2).unwrap()  // version BETWEEN 0 AND 2
-        .active(&true).unwrap()
-        .find_all(&db).await.unwrap();
-    println!("Found {} users with version 0-2", version_users.len());
-
-    // Example 15: Custom condition - active users in specific org
-    println!("\n15. Custom condition - active users in specific org:");
-    let org_users = User::builder_select()
-        .with_active_org(org_1.id).unwrap()  // active = 1 AND org = org_id
-        .count(&db).await.unwrap();
-    println!("Found {} active users in org {}", org_users, org_1.id);
-
-    // Example 16: UPDATE with custom condition
-    println!("\n16. UPDATE with custom condition:");
-    let high_version_update = User::builder_update()
-        .on_updated_by("system").unwrap()
-        .with_high_version(0).unwrap()  // WHERE version > 0
+    // Example 13: Update builder with conditions
+    println!("\n13. Update users with builder pattern:");
+    let update_result = User::builder_update()
+        .on_version(&1).unwrap()  // SET version = 1
+        .on_updated_by("admin").unwrap()  // SET updated_by = 'admin'
+        .by_org(&Some(1)).unwrap()  // WHERE org = 1
+        .by_active(&true).unwrap()  // WHERE active = true
         .execute(&db).await.unwrap();
-    println!("Updated {} users with high version", high_version_update);
+    println!("Updated {} users", update_result);
 
-    // Example 17: DELETE with custom condition
-    println!("\n17. DELETE with custom condition:");
-    let old_cutoff = "2021-01-01 00:00:00";
-    let deleted_old = User::builder_delete()
-        .with_old_inactive(old_cutoff).unwrap()
+    // Example 14: Delete builder with conditions
+    println!("\n14. Delete inactive users (if any exist):");
+    // First, let's create an inactive user for demo
+    let inactive_user = User {
+        email: "inactive@test.com".to_string(),
+        password: "password".to_string(),
+        org: Some(1),
+        active: false,  // inactive
+        ..Default::default()
+    };
+    let _ = User::insert(&inactive_user, &db).await;
+
+    let delete_result = User::builder_delete()
+        .active(&false).unwrap()  // WHERE active = false
+        .email_like("%test.com").unwrap()  // WHERE email LIKE '%test.com'
         .execute(&db).await.unwrap();
-    println!("Deleted {} old inactive users before {}", deleted_old, old_cutoff);
+    println!("Deleted {} inactive users", delete_result);
 
-    // Example 18: Complex query with multiple conditions and ordering
-    println!("\n18. Complex query - active users in org {}, ordered by email, limit 5:", org_1.id);
+    // Example 15: Complex query with multiple conditions and ordering
+    println!("\n15. Complex query - active users in org 1, ordered by email, limit 5:");
     let complex_users = User::builder_select()
         .active(&true).unwrap()
-        .org(&Some(org_1.id)).unwrap()
+        .org(&Some(1)).unwrap()
         .id_gte(&1).unwrap()  // ID >= 1
         .email_end_with(".com").unwrap()  // email ends with .com
         .order_by_email_asc().unwrap()
@@ -372,23 +307,61 @@ async fn main() {
         println!("  - ID: {}, Email: {}, Org: {:?}", user.id, user.email, user.org);
     }
 
-    // Example 19: Comparison with traditional methods
-    println!("\n19. Comparison - Builder vs Traditional:");
-
-    // Using builder
-    let builder_users = User::builder_select()
+    // Example 16: Custom conditions - email domain filtering
+    println!("\n16. Custom condition - email domain filtering:");
+    let domain_users = User::builder_select()
         .active(&true).unwrap()
-        .email_like("%abc%").unwrap()
+        .with_email_domain("@abc.com").unwrap()
+        .order_by_id_asc().unwrap()
         .find_all(&db).await.unwrap();
+    println!("Found {} users with @abc.com domain", domain_users.len());
 
-    // Using traditional method (if available)
-    let traditional_users = query_all_user_info("abc", 0, &db).await.unwrap();
+    // Example 17: Custom condition - version range filtering
+    println!("\n17. Custom condition - version range filtering:");
+    let version_users = User::builder_select()
+        .with_score_range(0, 2).unwrap()  // version BETWEEN 0 AND 2
+        .active(&true).unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Found {} users with version 0-2", version_users.len());
 
-    println!("Builder found: {} users", builder_users.len());
-    println!("Traditional found: {} users", traditional_users.len());
+    // Example 18: Custom condition - recent activity
+    println!("\n18. Custom condition - recent activity:");
+    let recent_cutoff = "2025-01-01 00:00:00";
+    let recent_users = User::builder_select()
+        .with_recent_activity(recent_cutoff, recent_cutoff).unwrap()  // updated_since, created_since
+        .active(&true).unwrap()
+        .count(&db).await.unwrap();
+    println!("Found {} users with recent activity since {}", recent_users, recent_cutoff);
 
-    println!("\n=== SQLite Builder Pattern Examples Completed! ===");
-    println!("Note: SQLite uses ? placeholders (not $1, $2 like PostgreSQL)");
+    // Example 19: UPDATE with custom condition
+    println!("\n19. UPDATE with custom condition:");
+    let high_version_update = User::builder_update()
+        .on_updated_by("system").unwrap()
+        .with_high_version(0).unwrap()  // WHERE version > 0
+        .execute(&db).await.unwrap();
+    println!("Updated {} users with high version", high_version_update);
+
+    // Example 20: DELETE with custom condition
+    println!("\n20. DELETE with custom condition:");
+    // First create an old inactive user for demo
+    let old_user = User {
+        email: "old@inactive.com".to_string(),
+        password: "password".to_string(),
+        org: Some(1),
+        active: false,
+        created_at: chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().with_timezone(&chrono::Utc),
+        ..Default::default()
+    };
+    let _ = User::insert(&old_user, &db).await;
+
+    let old_cutoff = "2021-01-01 00:00:00";
+    let deleted_old = User::builder_delete()
+        .with_old_inactive(old_cutoff).unwrap()
+        .execute(&db).await.unwrap();
+    println!("Deleted {} old inactive users before {}", deleted_old, old_cutoff);
+
+    println!("\n=== MySQL Builder Pattern Examples Completed! ===");
+    println!("Note: MySQL uses ? placeholders (like SQLite, not $1, $2 like PostgreSQL)");
 
 }
 
@@ -441,37 +414,37 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
     }
 }
 
-#[derive(SqliteTemplate, FromRow, Default, Clone, Debug)]
+#[derive(SqlxTemplate, FromRow, Default, Clone, Debug)]
 #[debug_slow = 1000]
 #[table("users")]
-#[tp_delete(by = "id")]
-#[tp_delete(by = "id, email")]
-#[tp_select_all(by = "id, email", order = "id desc")]
-#[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
-#[tp_select_one(by = "email")]
-#[tp_select_page(by = "org", order = "id desc, org desc")]
-#[tp_select_count(by = "id, email")]
-// New WHERE clause examples
-#[tp_select_one(where = "email = :email and active = :active", fn_name = "find_by_email_and_active")]
-#[tp_select_all(by = "org", where = "active = :active and version > :min_version", fn_name = "find_active_by_org_and_version")]
-#[tp_select_count(where = "created_at > :since$String", fn_name = "count_recent_users")]
-#[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
-#[tp_update(by = "email", on = "password", where = "active = :active", fn_name = "update_password_if_active")]
-#[tp_delete(where = "active = :active and version < :max_version", fn_name = "delete_old_inactive")]
-#[tp_select_stream(order = "id desc")]
-#[tp_upsert(by = "email", update = "password, updated_at")]
-#[tp_upsert(by = "id", where = "version < :max_version", fn_name = "upsert_if_version_below")]
+#[db("mysql")]
 #[tp_select_builder(
     with_email_domain = "email LIKE :domain$String",
     with_score_range = "version BETWEEN :min$i32 AND :max$i32",
-    with_active_org = "active = 1 AND org = :org_id$i32"
+    with_recent_activity = "updated_at > :updated_since$String OR created_at > :created_since$String"
 )]
 #[tp_update_builder(
     with_high_version = "version > :threshold$i32"
 )]
 #[tp_delete_builder(
-    with_old_inactive = "active = 0 AND created_at < :cutoff$String"
+    with_old_inactive = "active = false AND created_at < :cutoff$String"
 )]
+#[tp_upsert(by = "id")]
+#[tp_upsert(by = "email")]
+#[tp_delete(by = "id")]
+#[tp_delete(by = "id, email")]
+#[tp_select_all(by = "id, email", order = "id desc")]
+#[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted", where = "active = true AND id > :id")]
+// #[tp_select_one(by = "id", order = "id desc", fn_name = "get_last_inserted")]
+#[tp_select_one(by = "email")]
+#[tp_select_one(by = "group")]
+#[tp_select_page(by = "org", order = "id desc, org desc")]
+#[tp_select_count(by = "id, email")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning", returning = true)]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id", returning = "id")]
+#[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id_email", returning = "id, email")]
+#[tp_select_stream(order = "id desc")]
 pub struct User {
     #[auto]
     pub id: i32,
@@ -479,6 +452,7 @@ pub struct User {
     pub password: String,
     pub org: Option<i32>,
     pub active: bool,
+    pub group: Option<String>,
     #[auto]
     pub version: i32,
     pub created_by: Option<String>,
@@ -488,12 +462,10 @@ pub struct User {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
-
-
-#[derive(InsertTemplate, UpdateTemplate, SelectTemplate, DeleteTemplate, FromRow, TableName, Default, Clone, Debug)]
+#[derive(SqlxTemplate, FromRow, Default, Clone, Debug)]
 #[debug_slow = 1000]
 #[table("chats")]
-#[db("sqlite")]
+#[db("mysql")]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "id, sender", order = "id desc")]
 pub struct Chat {
@@ -508,9 +480,15 @@ pub struct Chat {
     pub created_at: DateTime<Utc>,
 }
 
+impl Chat {
+    fn test() {
 
-#[derive(SqliteTemplate, FromRow, Default, Clone, Debug, Columns)]
+    }
+}
+
+#[derive(SqlxTemplate, FromRow, Default, Clone, Debug, Columns)]
 #[table("organizations")]
+#[db("mysql")]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "code")]
 #[tp_select_all(order = "id desc")]
@@ -532,33 +510,41 @@ pub struct Organization {
 
 
 #[multi_query(file = "sql/init.sql", 0)]
-#[db("sqlite")]
+#[db("mysql")]
 async fn migrate() {}
 
 
 #[insert("INSERT INTO users(email, password, org, active, created_by, updated_by, updated_at) VALUES (:email, :password, :org, true, NULL, NULL, NULL)")]
-#[db("sqlite")]
+#[db("mysql")]
 async fn insert_new_user(email: &str, password: &str, org: i32) {}
 
 #[select(
     sql = "
     SELECT *
     FROM users
-    WHERE (email = :name and org = :org) OR email LIKE '%' || :name || '%'
+    WHERE (email = :name and org = :org) OR email LIKE CONCAT('%', :name, '%')
 ",
     debug = 100
 )]
-#[db("sqlite")]
+#[db("mysql")]
 pub async fn query_all_user_info(name: &str, org: i32) -> Vec<User> {}
 
 #[select("
     SELECT organizations.id, organizations.name
     FROM organizations
     JOIN users ON users.org = organizations.id
-    WHERE users.email LIKE '%' || :name || '%'
+    WHERE users.email LIKE CONCAT('%', :name, '%')
     GROUP BY organizations.id
 ")]
-#[db("sqlite")]
+#[db("mysql")]
 pub fn query_user_org(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
 
-
+#[select("
+    SELECT organizations.id, organizations.name
+    FROM organizations
+    JOIN users ON users.org = organizations.id
+    WHERE users.email LIKE CONCAT('%', :name, '%')
+    GROUP BY organizations.id
+")]
+#[db("mysql")]
+pub fn query_user_org1(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query

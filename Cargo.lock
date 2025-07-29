@@ -1075,6 +1075,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mysql"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures",
+ "futures-util",
+ "sqlx",
+ "sqlx-template",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
