@@ -138,12 +138,12 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
                 } 
                 syn::FnArg::Receiver(_) => None, 
             } }).collect(); 
-    // Validate query 
-    let dialect = super::get_database_dialect(db); 
-    let queries = match parser::validate_multi_query(&query_string, &param_names, dialect.as_ref()) { 
-        Ok(r) => r, 
-        Err(e) => panic!("{e}"), 
-    }; 
+    // Validate query
+    let dialect = super::get_database_dialect(db);
+    let queries = match parser::validate_multi_query_with_db(&query_string, &param_names, dialect.as_ref(), db) {
+        Ok(r) => r,
+        Err(e) => panic!("{e}"),
+    };
     let mut queries_gen = vec![]; 
     for query in queries { 
         let (before, after) = super::gen_debug_code(Some(debug_slow)); 
@@ -216,7 +216,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
 
     // Validate query
     let dialect = super::get_database_dialect(db);
-    let ValidateQueryResult {sql, params} = match parser::validate_query(&query_string, &param_names, mode, dialect.as_ref()) {
+    let ValidateQueryResult {sql, params} = match parser::validate_query_with_db(&query_string, &param_names, mode, dialect.as_ref(), db) {
         Ok(r) => r,
         Err(e) => panic!("{e}"),
     };
@@ -490,7 +490,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             param_names.push("offset".to_string());
             param_names.push("limit".to_string());
             
-            let ValidateQueryResult {sql, params} = parser::convert_to_page_query(&query_string, dialect.as_ref(), &param_names).unwrap();
+            let ValidateQueryResult {sql, params} = parser::convert_to_page_query_with_db(&query_string, dialect.as_ref(), &param_names, db).unwrap();
             let page_binds = params.iter().map(|field| {
                 // param starts with ':'
                 if field.as_str() == ":offset" {

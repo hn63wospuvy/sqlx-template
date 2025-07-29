@@ -134,6 +134,217 @@ async fn main() {
     let user = User::find_one_by_email(&"user2@abc.com".to_string(), &db).await.unwrap().unwrap();
     println!("User after update: {user:#?}");
 
+    // ========== BUILDER PATTERN EXAMPLES ==========
+    println!("\n=== BUILDER PATTERN EXAMPLES ===");
+
+    // Example 1: Simple find_all with single condition
+    println!("\n1. Find all active users:");
+    let active_users = User::builder_select()
+        .active(&true).unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Found {} active users", active_users.len());
+
+    // Example 2: Find_all with multiple conditions
+    println!("\n2. Find users with multiple conditions (active=true AND org=1):");
+    let filtered_users = User::builder_select()
+        .active(&true).unwrap()
+        .org(&Some(1)).unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Found {} users with org=1 and active=true", filtered_users.len());
+
+    // Example 3: Find_all with string conditions
+    println!("\n3. Find users by email pattern:");
+    let email_users = User::builder_select()
+        .email_like("%@abc.com").unwrap()
+        .active(&true).unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Found {} users with @abc.com email", email_users.len());
+
+    // Example 4: Find_all with ordering
+    println!("\n4. Find users ordered by ID descending:");
+    let ordered_users = User::builder_select()
+        .active(&true).unwrap()
+        .order_by_id_desc().unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Users ordered by ID desc:");
+    for user in &ordered_users {
+        println!("  - ID: {}, Email: {}", user.id, user.email);
+    }
+
+    // Example 5: Find_one with conditions
+    println!("\n5. Find one user by email:");
+    let single_user = User::builder_select()
+        .email("user2@abc.com").unwrap()
+        .active(&true).unwrap()
+        .find_one(&db).await.unwrap();
+    if let Some(user) = single_user {
+        println!("Found user: {} (ID: {})", user.email, user.id);
+    }
+
+    // Example 6: Find_page with pagination
+    println!("\n6. Paginated results (page 1, limit 2):");
+    let page_result = User::builder_select()
+        .active(&true).unwrap()
+        .order_by_id_asc().unwrap()
+        .find_page((0, 2, true), &db).await.unwrap(); // offset=0, limit=2, count=true
+    println!("Page info: offset={}, limit=2, total={:?}", 0, page_result.1);
+    println!("Users on page 1:");
+    for user in &page_result.0 {
+        println!("  - ID: {}, Email: {}", user.id, user.email);
+    }
+
+    // Example 7: Find_page second page
+    println!("\n7. Paginated results (page 2, limit 2):");
+    let page2_result = User::builder_select()
+        .active(&true).unwrap()
+        .order_by_id_asc().unwrap()
+        .find_page((2, 2, true), &db).await.unwrap(); // offset=2, limit=2, count=true
+    println!("Page info: offset=2, limit=2, total={:?}", page2_result.1);
+    println!("Users on page 2:");
+    for user in &page2_result.0 {
+        println!("  - ID: {}, Email: {}", user.id, user.email);
+    }
+
+    // Example 8: Stream with conditions
+    println!("\n8. Stream users with conditions:");
+    let mut builder = User::builder_select()
+        .active(&true).unwrap()
+        .org(&Some(1)).unwrap()
+        .order_by_email_asc().unwrap();
+    let mut user_stream = builder.stream(&db).await;
+
+    println!("Streaming users (active=true, org=1, ordered by email):");
+    let mut count = 0;
+    while let Some(user_result) = user_stream.next().await {
+        match user_result {
+            Ok(user) => {
+                count += 1;
+                println!("  Stream #{}: {} (ID: {})", count, user.email, user.id);
+            }
+            Err(e) => println!("Stream error: {}", e),
+        }
+    }
+
+    // Example 9: Complex conditions with numeric comparisons
+    println!("\n9. Find users with ID greater than 1:");
+    let high_id_users = User::builder_select()
+        .id_gt(&1).unwrap()
+        .active(&true).unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Found {} users with ID > 1", high_id_users.len());
+
+    // Example 10: Count with conditions
+    println!("\n10. Count users with conditions:");
+    let user_count = User::builder_select()
+        .active(&true).unwrap()
+        .org(&Some(1)).unwrap()
+        .count(&db).await.unwrap();
+    println!("Total count of active users in org 1: {}", user_count);
+
+    // Example 11: Multiple string conditions
+    println!("\n11. Find users with email starting with 'user':");
+    let prefix_users = User::builder_select()
+        .email_start_with("user").unwrap()
+        .active(&true).unwrap()
+        .order_by_id_asc().unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Found {} users with email starting with 'user'", prefix_users.len());
+
+    // Example 12: Build SQL without executing
+    println!("\n12. Build SQL query without executing:");
+    let query_builder = User::builder_select()
+        .active(&true).unwrap()
+        .org(&Some(1)).unwrap()
+        .email_like("%abc%").unwrap()
+        .order_by_id_desc().unwrap();
+    let sql = query_builder.build_sql();
+    println!("Generated SQL: {}", sql);
+
+    // Example 13: Update builder with conditions
+    println!("\n13. Update users with builder pattern:");
+    let update_result = User::builder_update()
+        .on_version(&1).unwrap()  // SET version = 1
+        .on_updated_by("admin").unwrap()  // SET updated_by = 'admin'
+        .by_org(&Some(1)).unwrap()  // WHERE org = 1
+        .by_active(&true).unwrap()  // WHERE active = true
+        .execute(&db).await.unwrap();
+    println!("Updated {} users", update_result);
+
+    // Example 14: Delete builder with conditions
+    println!("\n14. Delete inactive users (if any exist):");
+    // First, let's create an inactive user for demo
+    let inactive_user = User {
+        email: "inactive@test.com".to_string(),
+        password: "password".to_string(),
+        org: Some(1),
+        active: false,  // inactive
+        ..Default::default()
+    };
+    let _ = User::insert(&inactive_user, &db).await;
+
+    let delete_result = User::builder_delete()
+        .active(&false).unwrap()  // WHERE active = false
+        .email_like("%test.com").unwrap()  // WHERE email LIKE '%test.com'
+        .execute(&db).await.unwrap();
+    println!("Deleted {} inactive users", delete_result);
+
+    // Example 15: Complex query with multiple conditions and ordering
+    println!("\n15. Complex query - active users in org 1, ordered by email, limit 5:");
+    let complex_users = User::builder_select()
+        .active(&true).unwrap()
+        .org(&Some(1)).unwrap()
+        .id_gte(&1).unwrap()  // ID >= 1
+        .email_end_with(".com").unwrap()  // email ends with .com
+        .order_by_email_asc().unwrap()
+        .order_by_id_desc().unwrap()  // secondary sort
+        .find_page((0, 5, false), &db).await.unwrap();  // limit 5, no count
+    println!("Complex query results:");
+    for user in &complex_users.0 {
+        println!("  - ID: {}, Email: {}, Org: {:?}", user.id, user.email, user.org);
+    }
+
+    // Example 16: Custom conditions - email domain filtering
+    println!("\n16. Custom condition - email domain filtering:");
+    let domain_users = User::builder_select()
+        .active(&true).unwrap()
+        .with_email_domain("@abc.com").unwrap()
+        .order_by_id_asc().unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Found {} users with @abc.com domain", domain_users.len());
+
+    // Example 17: Custom condition - version range filtering
+    println!("\n17. Custom condition - version range filtering:");
+    let version_users = User::builder_select()
+        .with_score_range(0, 2).unwrap()  // version BETWEEN 0 AND 2
+        .active(&true).unwrap()
+        .find_all(&db).await.unwrap();
+    println!("Found {} users with version 0-2", version_users.len());
+
+    // Example 18: Custom condition - active users in specific org
+    println!("\n18. Custom condition - active users in specific org:");
+    let org_users = User::builder_select()
+        .with_active_org(1).unwrap()  // active = true AND org = 1
+        .count(&db).await.unwrap();
+    println!("Found {} active users in org 1", org_users);
+
+    // Example 19: UPDATE with custom condition
+    println!("\n19. UPDATE with custom condition:");
+    let high_version_update = User::builder_update()
+        .on_updated_by("system").unwrap()
+        .with_high_version(0).unwrap()  // WHERE version > 0
+        .execute(&db).await.unwrap();
+    println!("Updated {} users with high version", high_version_update);
+
+    // Example 20: DELETE with custom condition
+    println!("\n20. DELETE with custom condition:");
+    let max_version = 5;
+    let deleted_old = User::builder_delete()
+        .with_old_inactive(max_version).unwrap()  // active = false AND version < 5
+        .execute(&db).await.unwrap();
+    println!("Deleted {} old inactive users with version < {}", deleted_old, max_version);
+
+    println!("\n=== PostgreSQL Builder Pattern Examples Completed! ===");
+    println!("Note: PostgreSQL uses $1, $2, $3... placeholders (not ? like SQLite/MySQL)");
 
 }
 
@@ -189,6 +400,17 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[derive(PostgresTemplate, FromRow, Default, Clone, Debug)]
 #[debug_slow = 1000]
 #[table("users")]
+#[tp_select_builder(
+    with_email_domain = "email LIKE :domain$String",
+    with_score_range = "version BETWEEN :min$i32 AND :max$i32",
+    with_active_org = "active = true AND org = :org_id$i32"
+)]
+#[tp_update_builder(
+    with_high_version = "version > :threshold$i32"
+)]
+#[tp_delete_builder(
+    with_old_inactive = "active = false AND version < :max_version$i32"
+)]
 #[tp_upsert(by = "id")]
 #[tp_upsert(by = "email")]
 #[tp_delete(by = "id")]

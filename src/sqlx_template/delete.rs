@@ -285,7 +285,7 @@ pub fn derive_delete(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         fn_args.append(&mut args_vec);
                         binds.append(&mut bind_vec);
                         let start_counter = by_fields.len() + 1;
-                        let (sql, params) = parser::replace_placeholder(&where_stmt_str, par_res.placeholder_vars, Some(start_counter as i32));
+                        let (sql, params) = parser::replace_placeholder_with_db(&where_stmt_str, par_res.placeholder_vars, Some(start_counter as i32), db);
                         where_condition.push(sql);
                     
                     } else {

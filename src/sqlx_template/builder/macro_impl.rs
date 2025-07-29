@@ -4,6 +4,34 @@ use syn::{DeriveInput, Data, Fields, Field, Type as SynType, Ident};
 
 use crate::sqlx_template::{Database, get_field_name, get_field_name_as_column, get_database_type, get_table_name};
 
+/// Generate appropriate placeholder for the database type
+fn get_placeholder_template(database: Database) -> &'static str {
+    match database {
+        Database::Postgres => "$$PLACEHOLDER$$",
+        Database::Sqlite | Database::Mysql | Database::Any => "?",
+    }
+}
+
+/// Generate runtime placeholder replacement function
+fn generate_placeholder_replacement_fn(database: Database) -> TokenStream {
+    match database {
+        Database::Postgres => quote! {
+            fn replace_placeholders(sql: &str, param_count: usize) -> String {
+                let mut result = sql.to_string();
+                for i in 1..=param_count {
+                    result = result.replacen("$$PLACEHOLDER$$", &format!("${}", i), 1);
+                }
+                result
+            }
+        },
+        Database::Sqlite | Database::Mysql | Database::Any => quote! {
+            fn replace_placeholders(sql: &str, _param_count: usize) -> String {
+                sql.to_string() // No replacement needed for ? placeholders
+            }
+        },
+    }
+}
+
 /// Generate select builder implementation cho struct
 pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -> TokenStream {
     let struct_name = &input.ident;
@@ -48,6 +76,9 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
     let count_base_sql = format!("SELECT COUNT(*) FROM {}", config.table_name);
     let count_base_literal = proc_macro2::Literal::string(&count_base_sql);
+
+    // Generate placeholder replacement function based on database type
+    let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
 
     // Build builder with simple parameter storage and manual binding
     quote! {
@@ -99,7 +130,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     stream_sql: self.stream_sql.clone(),
                 }
             }
-        
+
             pub fn new() -> Self {
                 Self {
                     table_name: #table_name.to_string(),
@@ -114,13 +145,18 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             #(#order_methods)*
             #(#custom_methods)*
 
+            // Add placeholder replacement function
+            #placeholder_replacement_fn
+
             /// Build SQL query string
             pub fn build_sql(&self) -> String {
                 let mut sql = #select_base_literal.to_string();
 
                 if !self.where_conditions.is_empty() {
                     sql.push_str(" WHERE ");
-                    sql.push_str(&self.where_conditions.join(" AND "));
+                    let where_clause = self.where_conditions.join(" AND ");
+                    let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
+                    sql.push_str(&replaced_where);
                 }
 
                 if !self.order_by_clauses.is_empty() {
@@ -143,18 +179,8 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
-                let Self { table_name, where_conditions, where_args, order_by_clauses, .. } = self;
-
-                // Build SQL manually since we destructured self
-                let mut sql = #select_base_literal.to_string();
-                if !where_conditions.is_empty() {
-                    sql.push_str(" WHERE ");
-                    sql.push_str(&where_conditions.join(" AND "));
-                }
-                if !order_by_clauses.is_empty() {
-                    sql.push_str(" ORDER BY ");
-                    sql.push_str(&order_by_clauses.join(", "));
-                }
+                let sql = self.build_sql();
+                let where_args = self.where_args;
 
                 // Manually bind parameters
                 sqlx::query_as_with(&sql, *where_args.0).fetch_optional(executor).await
@@ -166,18 +192,8 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
-                let Self { table_name, where_conditions, where_args, order_by_clauses, .. } = self;
-
-                // Build SQL manually since we destructured self
-                let mut sql = #select_base_literal.to_string();
-                if !where_conditions.is_empty() {
-                    sql.push_str(" WHERE ");
-                    sql.push_str(&where_conditions.join(" AND "));
-                }
-                if !order_by_clauses.is_empty() {
-                    sql.push_str(" ORDER BY ");
-                    sql.push_str(&order_by_clauses.join(", "));
-                }
+                let sql = self.build_sql();
+                let where_args = self.where_args;
 
                 // Manually bind parameters
                 sqlx::query_as_with(&sql, *where_args.0)
@@ -194,34 +210,29 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 E: sqlx::Executor<'c, Database = #database_type> +'c + Copy,
             {
                 let (offset, limit, count) = page.into();
-                let Self { table_name, where_conditions, where_args, order_by_clauses, .. } = self;
-                let mut sql = #select_base_literal.to_string();
-                if !where_conditions.is_empty() {
-                    sql.push_str(" WHERE ");
-                    sql.push_str(&where_conditions.join(" AND "));
-                }
-                if !order_by_clauses.is_empty() {
-                    sql.push_str(" ORDER BY ");
-                    sql.push_str(&order_by_clauses.join(", "));
-                }
+
+                // Build base SQL with WHERE and ORDER BY
+                let mut sql = self.build_sql();
                 sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-                println!("find_page - SQL: {}", sql);
+
                 let res = if count {
-                    let data = sqlx::query_as_with(&sql, *where_args.0.clone()).fetch_all(executor).await?;
+                    let data = sqlx::query_as_with(&sql, *self.where_args.0.clone()).fetch_all(executor).await?;
                     if data.is_empty() && offset == 0 {
                         (data, Some(0))
                     } else {
+                        // Build count SQL
                         let mut count_sql = #count_base_literal.to_string();
-                        if !where_conditions.is_empty() {
+                        if !self.where_conditions.is_empty() {
                             count_sql.push_str(" WHERE ");
-                            count_sql.push_str(&where_conditions.join(" AND "));
+                            let where_clause = self.where_conditions.join(" AND ");
+                            let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
+                            count_sql.push_str(&replaced_where);
                         }
-                        println!("find_page - Count SQL: {}", count_sql);
-                        let count = sqlx::query_scalar_with(&count_sql, *where_args.0).fetch_one(executor).await?;
+                        let count = sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(executor).await?;
                         (data, Some(count))
                     }
                 } else {
-                    let data = sqlx::query_as_with(&sql, *where_args.0).fetch_all(executor).await?;
+                    let data = sqlx::query_as_with(&sql, *self.where_args.0).fetch_all(executor).await?;
                     (data, None)
                 };
                 Ok(res)
@@ -234,13 +245,14 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
-                let Self { table_name, where_conditions, where_args, order_by_clauses, .. } = self;
                 let mut count_sql = #count_base_literal.to_string();
-                if !where_conditions.is_empty() {
+                if !self.where_conditions.is_empty() {
                     count_sql.push_str(" WHERE ");
-                    count_sql.push_str(&where_conditions.join(" AND "));
+                    let where_clause = self.where_conditions.join(" AND ");
+                    let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
+                    count_sql.push_str(&replaced_where);
                 }
-                sqlx::query_scalar_with(&count_sql, *where_args.0).fetch_one(executor).await
+                sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(executor).await
             }
 
 
@@ -255,7 +267,9 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 self.stream_sql.push_str(#select_base_literal);
                 if !self.where_conditions.is_empty() {
                     self.stream_sql.push_str(" WHERE ");
-                    self.stream_sql.push_str(&self.where_conditions.join(" AND "));
+                    let where_clause = self.where_conditions.join(" AND ");
+                    let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
+                    self.stream_sql.push_str(&replaced_where);
                 }
                 if !self.order_by_clauses.is_empty() {
                     self.stream_sql.push_str(" ORDER BY ");
@@ -324,32 +338,34 @@ fn generate_field_methods(field: &Field, database: Database) -> TokenStream {
     let field_name = field.ident.as_ref().unwrap(); // Get &Ident directly
     let column_name = get_field_name_as_column(field, database);
     let field_type = &field.ty;
-    let database_type = get_database_type(database);
 
     // Determine field type category
     let type_str = quote!(#field_type).to_string();
 
     if is_string_type(&type_str) {
-        generate_string_methods(field_name, &column_name, &database_type)
+        generate_string_methods(field_name, &column_name, database)
     } else if is_numeric_or_datetime_type(&type_str) {
-        generate_numeric_datetime_methods(field_name, &column_name, &database_type, field_type)
+        generate_numeric_datetime_methods(field_name, &column_name, database, field_type)
     } else {
-        generate_basic_methods(field_name, &column_name, &database_type, field_type)
+        generate_basic_methods(field_name, &column_name, database, field_type)
     }
 }
 
 /// Generate methods cho string fields
-fn generate_string_methods(field_name: &Ident, column_name: &str, _database_type: &TokenStream) -> TokenStream {
+fn generate_string_methods(field_name: &Ident, column_name: &str, database: Database) -> TokenStream {
     let eq_method = quote::format_ident!("{}", field_name);
     let not_method = quote::format_ident!("{}_not", field_name);
     let like_method = quote::format_ident!("{}_like", field_name);
     let start_with_method = quote::format_ident!("{}_start_with", field_name);
     let end_with_method = quote::format_ident!("{}_end_with", field_name);
 
+    // Generate placeholder based on database type
+    let placeholder = get_placeholder_template(database);
+
     // Pre-generate SQL condition strings at compile time
-    let eq_condition = format!("{} = ?", column_name);
-    let neq_condition = format!("{} != ?", column_name);
-    let like_condition = format!("{} LIKE ?", column_name);
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
+    let like_condition = format!("{} LIKE {}", column_name, placeholder);
 
     let eq_condition_literal = Literal::string(&eq_condition);
     let neq_condition_literal = Literal::string(&neq_condition);
@@ -394,7 +410,7 @@ fn generate_string_methods(field_name: &Ident, column_name: &str, _database_type
 }
 
 /// Generate methods cho numeric/datetime fields
-fn generate_numeric_datetime_methods(field_name: &Ident, column_name: &str, _database_type: &TokenStream, field_type: &SynType) -> TokenStream {
+fn generate_numeric_datetime_methods(field_name: &Ident, column_name: &str, database: Database, field_type: &SynType) -> TokenStream {
     let eq_method = quote::format_ident!("{}", field_name);
     let not_method = quote::format_ident!("{}_not", field_name);
     let gt_method = quote::format_ident!("{}_gt", field_name);
@@ -402,13 +418,16 @@ fn generate_numeric_datetime_methods(field_name: &Ident, column_name: &str, _dat
     let lt_method = quote::format_ident!("{}_lt", field_name);
     let lte_method = quote::format_ident!("{}_lte", field_name);
 
+    // Generate placeholder based on database type
+    let placeholder = get_placeholder_template(database);
+
     // Pre-generate SQL condition strings at compile time
-    let eq_condition = format!("{} = ?", column_name);
-    let neq_condition = format!("{} != ?", column_name);
-    let gt_condition = format!("{} > ?", column_name);
-    let gte_condition = format!("{} >= ?", column_name);
-    let lt_condition = format!("{} < ?", column_name);
-    let lte_condition = format!("{} <= ?", column_name);
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
+    let gt_condition = format!("{} > {}", column_name, placeholder);
+    let gte_condition = format!("{} >= {}", column_name, placeholder);
+    let lt_condition = format!("{} < {}", column_name, placeholder);
+    let lte_condition = format!("{} <= {}", column_name, placeholder);
 
     let eq_condition_literal = Literal::string(&eq_condition);
     let neq_condition_literal = Literal::string(&neq_condition);
@@ -463,23 +482,31 @@ fn generate_numeric_datetime_methods(field_name: &Ident, column_name: &str, _dat
 }
 
 /// Generate basic methods cho other types (chỉ equality)
-fn generate_basic_methods(field_name: &Ident, column_name: &str, _database_type: &TokenStream, field_type: &SynType) -> TokenStream {
+fn generate_basic_methods(field_name: &Ident, column_name: &str, database: Database, field_type: &SynType) -> TokenStream {
     let eq_method = quote::format_ident!("{}", field_name);
     let not_method = quote::format_ident!("{}_not", field_name);
 
-    let column_literal = Literal::string(column_name);
+    // Generate placeholder based on database type
+    let placeholder = get_placeholder_template(database);
+
+    // Pre-generate SQL condition strings at compile time
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
+
+    let eq_condition_literal = Literal::string(&eq_condition);
+    let neq_condition_literal = Literal::string(&neq_condition);
 
     quote! {
         /// Equality condition
         pub fn #eq_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(format!("{} = ?", #column_literal));
+            self.where_conditions.push(#eq_condition_literal.to_string());
             self.where_args.add_param(value)?;
             Ok(self)
         }
 
         /// Not equal condition
         pub fn #not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(format!("{} != ?", #column_literal));
+            self.where_conditions.push(#neq_condition_literal.to_string());
             self.where_args.add_param(value)?;
             Ok(self)
         }
@@ -703,11 +730,13 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
         let field_name = field.ident.as_ref().unwrap();
         let column_name = get_field_name_as_column(field, config.database);
         let on_method = quote::format_ident!("on_{}", field_name);
-        let column_literal = Literal::string(&column_name);
         let field_type = &field.ty;
 
+        // Generate placeholder based on database type
+        let placeholder = get_placeholder_template(config.database);
+
         // Pre-generate SET clause string at compile time
-        let set_clause = format!("{} = ?", column_name);
+        let set_clause = format!("{} = {}", column_name, placeholder);
         let set_clause_literal = Literal::string(&set_clause);
 
         let type_str = quote!(#field_type).to_string();
@@ -737,17 +766,16 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
         let field_name = field.ident.as_ref().unwrap();
         let column_name = get_field_name_as_column(field, config.database);
         let field_type = &field.ty;
-        let database_type = get_database_type(config.database);
 
         // Determine field type category
         let type_str = quote!(#field_type).to_string();
 
         if is_string_type(&type_str) {
-            generate_update_string_methods(field_name, &column_name, &database_type)
+            generate_update_string_methods(field_name, &column_name, config.database)
         } else if is_numeric_or_datetime_type(&type_str) {
-            generate_update_numeric_datetime_methods(field_name, &column_name, &database_type, field_type)
+            generate_update_numeric_datetime_methods(field_name, &column_name, config.database, field_type)
         } else {
-            generate_update_basic_methods(field_name, &column_name, &database_type, field_type)
+            generate_update_basic_methods(field_name, &column_name, config.database, field_type)
         }
     }).collect::<Vec<_>>();
 
@@ -759,6 +787,9 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
     // Pre-generate UPDATE SQL template
     let update_base_sql = format!("UPDATE {}", config.table_name);
     let update_base_literal = proc_macro2::Literal::string(&update_base_sql);
+
+    // Generate placeholder replacement function based on database type
+    let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
 
     quote! {
         /// UpdateBuilderArgs for parameter binding
@@ -822,6 +853,9 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             #(#by_methods)*
             #(#custom_methods)*
 
+            // Add placeholder replacement function
+            #placeholder_replacement_fn
+
             /// Build SQL query string
             pub fn build_sql(&self) -> String {
                 if self.set_clauses.is_empty() {
@@ -837,7 +871,8 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     sql.push_str(&self.where_conditions.join(" AND "));
                 }
 
-                sql
+                // Replace all placeholders at once with correct positions
+                Self::replace_placeholders(&sql, self.where_args.len())
             }
 
             /// Execute update query
@@ -845,19 +880,8 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
-                let Self { table_name, set_clauses, where_conditions, where_args } = self;
-
-                // Build SQL manually since we destructured self
-                let mut sql = #update_base_literal.to_string();
-                if !set_clauses.is_empty() {
-                    sql.push_str(" SET ");
-                    sql.push_str(&set_clauses.join(", "));
-                }
-                if !where_conditions.is_empty() {
-                    sql.push_str(" WHERE ");
-                    sql.push_str(&where_conditions.join(" AND "));
-                }
-
+                let sql = self.build_sql();
+                let where_args = self.where_args;
 
                 let result = sqlx::query_with(&sql, *where_args.0).execute(executor).await?;
                 Ok(result.rows_affected())
@@ -919,17 +943,20 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 }
 
 /// Generate by_* methods cho string fields trong update builder
-fn generate_update_string_methods(field_name: &Ident, column_name: &str, _database_type: &TokenStream) -> TokenStream {
+fn generate_update_string_methods(field_name: &Ident, column_name: &str, database: Database) -> TokenStream {
     let by_method = quote::format_ident!("by_{}", field_name);
     let by_not_method = quote::format_ident!("by_{}_not", field_name);
     let by_like_method = quote::format_ident!("by_{}_like", field_name);
     let by_start_with_method = quote::format_ident!("by_{}_start_with", field_name);
     let by_end_with_method = quote::format_ident!("by_{}_end_with", field_name);
 
+    // Generate placeholder based on database type
+    let placeholder = get_placeholder_template(database);
+
     // Pre-generate WHERE condition strings at compile time
-    let eq_condition = format!("{} = ?", column_name);
-    let neq_condition = format!("{} != ?", column_name);
-    let like_condition = format!("{} LIKE ?", column_name);
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
+    let like_condition = format!("{} LIKE {}", column_name, placeholder);
 
     let eq_condition_literal = Literal::string(&eq_condition);
     let neq_condition_literal = Literal::string(&neq_condition);
@@ -974,7 +1001,7 @@ fn generate_update_string_methods(field_name: &Ident, column_name: &str, _databa
 }
 
 /// Generate by_* methods cho numeric/datetime fields trong update builder
-fn generate_update_numeric_datetime_methods(field_name: &Ident, column_name: &str, _database_type: &TokenStream, field_type: &SynType) -> TokenStream {
+fn generate_update_numeric_datetime_methods(field_name: &Ident, column_name: &str, database: Database, field_type: &SynType) -> TokenStream {
     let by_method = quote::format_ident!("by_{}", field_name);
     let by_not_method = quote::format_ident!("by_{}_not", field_name);
     let by_gt_method = quote::format_ident!("by_{}_gt", field_name);
@@ -982,13 +1009,16 @@ fn generate_update_numeric_datetime_methods(field_name: &Ident, column_name: &st
     let by_lt_method = quote::format_ident!("by_{}_lt", field_name);
     let by_lte_method = quote::format_ident!("by_{}_lte", field_name);
 
+    // Generate placeholder based on database type
+    let placeholder = get_placeholder_template(database);
+
     // Pre-generate WHERE condition strings at compile time
-    let eq_condition = format!("{} = ?", column_name);
-    let neq_condition = format!("{} != ?", column_name);
-    let gt_condition = format!("{} > ?", column_name);
-    let gte_condition = format!("{} >= ?", column_name);
-    let lt_condition = format!("{} < ?", column_name);
-    let lte_condition = format!("{} <= ?", column_name);
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
+    let gt_condition = format!("{} > {}", column_name, placeholder);
+    let gte_condition = format!("{} >= {}", column_name, placeholder);
+    let lt_condition = format!("{} < {}", column_name, placeholder);
+    let lte_condition = format!("{} <= {}", column_name, placeholder);
 
     let eq_condition_literal = Literal::string(&eq_condition);
     let neq_condition_literal = Literal::string(&neq_condition);
@@ -1043,13 +1073,16 @@ fn generate_update_numeric_datetime_methods(field_name: &Ident, column_name: &st
 }
 
 /// Generate by_* basic methods cho other types trong update builder
-fn generate_update_basic_methods(field_name: &Ident, column_name: &str, _database_type: &TokenStream, field_type: &SynType) -> TokenStream {
+fn generate_update_basic_methods(field_name: &Ident, column_name: &str, database: Database, field_type: &SynType) -> TokenStream {
     let by_method = quote::format_ident!("by_{}", field_name);
     let by_not_method = quote::format_ident!("by_{}_not", field_name);
 
+    // Generate placeholder based on database type
+    let placeholder = get_placeholder_template(database);
+
     // Pre-generate WHERE condition strings at compile time
-    let eq_condition = format!("{} = ?", column_name);
-    let neq_condition = format!("{} != ?", column_name);
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
 
     let eq_condition_literal = Literal::string(&eq_condition);
     let neq_condition_literal = Literal::string(&neq_condition);
@@ -1101,6 +1134,9 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
     // Pre-generate DELETE SQL template
     let delete_base_sql = format!("DELETE FROM {}", config.table_name);
     let delete_base_literal = proc_macro2::Literal::string(&delete_base_sql);
+
+    // Generate placeholder replacement function based on database type
+    let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
 
     quote! {
         /// DeleteBuilderArgs for parameter binding
@@ -1161,13 +1197,18 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             #(#field_methods)*
             #(#custom_methods)*
 
+            // Add placeholder replacement function
+            #placeholder_replacement_fn
+
             /// Build SQL query string
             pub fn build_sql(&self) -> String {
                 let mut sql = #delete_base_literal.to_string();
 
                 if !self.where_conditions.is_empty() {
                     sql.push_str(" WHERE ");
-                    sql.push_str(&self.where_conditions.join(" AND "));
+                    let where_clause = self.where_conditions.join(" AND ");
+                    let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
+                    sql.push_str(&replaced_where);
                 }
 
                 sql
@@ -1178,17 +1219,9 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
-                let Self { table_name, where_conditions, where_args } = self;
+                let sql = self.build_sql();
+                let where_args = self.where_args;
 
-                // Build SQL manually since we destructured self
-                let mut sql = #delete_base_literal.to_string();
-                if !where_conditions.is_empty() {
-                    sql.push_str(" WHERE ");
-                    sql.push_str(&where_conditions.join(" AND "));
-                }
-
-                // Manually bind parameters
-                
                 let result = sqlx::query_with(&sql, *where_args.0).execute(executor).await?;
                 Ok(result.rows_affected())
             }
@@ -1379,10 +1412,11 @@ fn generate_custom_condition_method(condition: &super::CustomCondition, database
         proc_macro2::Literal::string(var)
     }).collect::<Vec<_>>();
 
-    // Create a simple SQL condition by replacing placeholders with ?
+    // Create a simple SQL condition by replacing placeholders with appropriate database placeholders
     let mut condition_sql = sql_expression.to_string();
+    let placeholder_template = get_placeholder_template(database);
     for placeholder in &par_res.placeholder_vars {
-        condition_sql = condition_sql.replace(placeholder, "?");
+        condition_sql = condition_sql.replace(placeholder, placeholder_template);
     }
     let condition_sql_literal = proc_macro2::Literal::string(&condition_sql);
 
