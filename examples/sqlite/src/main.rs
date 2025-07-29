@@ -179,8 +179,14 @@ async fn main() {
         updated_at: None,
     };
     let rows = User::upsert_if_version_below(&test_user, &10, &db).await.unwrap();
+
+    
+
     println!("   Upserted {} users with version < 10", rows);
 
+    let mut builder = User::builder_select();
+    let users = builder.email_like("%example%").unwrap().find_page((0, 10, true), &db).await.unwrap();
+    println!("   Found {} users with email like %example%", users.0.len());
     println!("=== All WHERE clause tests completed! ===");
 
 }
@@ -254,6 +260,9 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_select_stream(order = "id desc")]
 #[tp_upsert(by = "email", update = "password, updated_at")]
 #[tp_upsert(by = "id", where = "version < :max_version", fn_name = "upsert_if_version_below")]
+#[tp_select_builder(
+    with_email_domain = "email LIKE :domain$String"
+)]
 pub struct User {
     #[auto]
     pub id: i32,

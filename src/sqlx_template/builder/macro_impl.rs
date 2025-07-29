@@ -205,7 +205,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     sql.push_str(&order_by_clauses.join(", "));
                 }
                 sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-                
+                println!("find_page - SQL: {}", sql);
                 let res = if count {
                     let data = sqlx::query_as_with(&sql, *where_args.0.clone()).fetch_all(executor).await?;
                     if data.is_empty() && offset == 0 {
@@ -216,7 +216,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                             count_sql.push_str(" WHERE ");
                             count_sql.push_str(&where_conditions.join(" AND "));
                         }
-                        
+                        println!("find_page - Count SQL: {}", count_sql);
                         let count = sqlx::query_scalar_with(&count_sql, *where_args.0).fetch_one(executor).await?;
                         (data, Some(count))
                     }
