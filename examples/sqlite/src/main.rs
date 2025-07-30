@@ -5,6 +5,8 @@ use sqlx_template::{insert, multi_query, query, select, update, Columns, DeleteT
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
 use sqlx_template::InsertTemplate;
 
+mod test_null_handling;
+
 // const DB_URL: &str = "sqlite://sqlite.db";
 const DB_URL: &str = "sqlite::memory:";
 
@@ -60,11 +62,19 @@ async fn main() {
         ..Default::default()
     };
 
+    let user_4 = User {
+        email: format!("user4@abc.com"),
+        password: "password".into(),
+        org: None,
+        active: true,
+        ..Default::default()
+    };
+
     // Insert user
     User::insert(&user_1, &db).await.unwrap();
     User::insert(&user_2, &db).await.unwrap();
     insert_new_user("user3@abc.com", "password", org_1.id, &db).await.unwrap();
-
+    User::insert(&user_4, &db).await.unwrap();
 
     // Query user
     let users = query_all_user_info("user", 0, &db).await.unwrap();
@@ -86,7 +96,7 @@ async fn main() {
 
     // Pagination
     let page_request = PageRequest::default();
-    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&Some(org_1.id), page_request, &db)
+    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&org_1.id, page_request, &db)
         .await
         .unwrap()
         .into_page(page_request);
@@ -146,7 +156,7 @@ async fn main() {
 
     // Test 2: SELECT with BY + WHERE (org mapping + version custom type)
     println!("2. Testing find_active_by_org_and_version:");
-    let users = User::find_active_by_org_and_version(&Some(org_1.id), &true, &0, &db).await.unwrap();
+    let users = User::find_active_by_org_and_version(&org_1.id, &true, &0, &db).await.unwrap();
     println!("   Found {} active users in org {} with version > 0", users.len(), org_1.id);
 
     // Test 3: COUNT with WHERE (custom type)
@@ -390,6 +400,16 @@ async fn main() {
     println!("\n=== SQLite Builder Pattern Examples Completed! ===");
     println!("Note: SQLite uses ? placeholders (not $1, $2 like PostgreSQL)");
 
+    // Test NULL value handling
+    println!("\n{}", "=".repeat(50));
+    println!("Running NULL value handling tests...");
+    println!("{}", "=".repeat(50));
+
+    if let Err(e) = test_null_handling::test_null_value_handling().await {
+        eprintln!("NULL value handling test failed: {}", e);
+    } else {
+        println!("NULL value handling tests completed successfully!");
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

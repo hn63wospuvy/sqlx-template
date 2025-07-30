@@ -2,7 +2,7 @@ use proc_macro2::{TokenStream, Literal};
 use quote::{quote, ToTokens};
 use syn::{DeriveInput, Data, Fields, Field, Type as SynType, Ident};
 
-use crate::sqlx_template::{Database, get_field_name, get_field_name_as_column, get_database_type, get_table_name};
+use crate::sqlx_template::{Database, get_field_name, get_field_name_as_column, get_database_type, get_table_name, is_option_type_from_type, extract_option_inner_type};
 
 /// Generate appropriate placeholder for the database type
 fn get_placeholder_template(database: Database) -> &'static str {
@@ -343,7 +343,7 @@ fn generate_field_methods(field: &Field, database: Database) -> TokenStream {
     let type_str = quote!(#field_type).to_string();
 
     if is_string_type(&type_str) {
-        generate_string_methods(field_name, &column_name, database)
+        generate_string_methods_with_type(field_name, &column_name, database, Some(field_type))
     } else if is_numeric_or_datetime_type(&type_str) {
         generate_numeric_datetime_methods(field_name, &column_name, database, field_type)
     } else {
@@ -353,58 +353,160 @@ fn generate_field_methods(field: &Field, database: Database) -> TokenStream {
 
 /// Generate methods cho string fields
 fn generate_string_methods(field_name: &Ident, column_name: &str, database: Database) -> TokenStream {
+    generate_string_methods_with_type(field_name, column_name, database, None)
+}
+
+/// Generate methods cho string fields with optional type information
+fn generate_string_methods_with_type(field_name: &Ident, column_name: &str, database: Database, field_type: Option<&SynType>) -> TokenStream {
     let eq_method = quote::format_ident!("{}", field_name);
     let not_method = quote::format_ident!("{}_not", field_name);
     let like_method = quote::format_ident!("{}_like", field_name);
     let start_with_method = quote::format_ident!("{}_start_with", field_name);
     let end_with_method = quote::format_ident!("{}_end_with", field_name);
 
-    // Generate placeholder based on database type
-    let placeholder = get_placeholder_template(database);
+    // Check if this is an Option<String> or Option<&str> type
+    let is_option = field_type.map_or(false, |ty| is_option_type_from_type(ty));
 
-    // Pre-generate SQL condition strings at compile time
-    let eq_condition = format!("{} = {}", column_name, placeholder);
-    let neq_condition = format!("{} != {}", column_name, placeholder);
-    let like_condition = format!("{} LIKE {}", column_name, placeholder);
+    if is_option {
+        // For Option<String> types, generate runtime checks for None values
+        let is_null_condition = format!("{} IS NULL", column_name);
+        let is_not_null_condition = format!("{} IS NOT NULL", column_name);
+        let is_null_literal = Literal::string(&is_null_condition);
+        let is_not_null_literal = Literal::string(&is_not_null_condition);
 
-    let eq_condition_literal = Literal::string(&eq_condition);
-    let neq_condition_literal = Literal::string(&neq_condition);
-    let like_condition_literal = Literal::string(&like_condition);
+        // Generate placeholder based on database type for non-null values
+        let placeholder = get_placeholder_template(database);
+        let eq_condition = format!("{} = {}", column_name, placeholder);
+        let neq_condition = format!("{} != {}", column_name, placeholder);
+        let like_condition = format!("{} LIKE {}", column_name, placeholder);
 
-    quote! {
-        /// Equality condition
-        pub fn #eq_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#eq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
+        let eq_condition_literal = Literal::string(&eq_condition);
+        let neq_condition_literal = Literal::string(&neq_condition);
+        let like_condition_literal = Literal::string(&like_condition);
+
+        let field_type = field_type.unwrap();
+
+        quote! {
+            /// Equality condition for Option string type (handles None as IS NULL)
+            pub fn #eq_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#eq_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        self.where_conditions.push(#is_null_literal.to_string());
+                        // No parameter binding for IS NULL
+                    }
+                }
+                Ok(self)
+            }
+
+            /// Not equal condition for Option string type (handles None as IS NOT NULL)
+            pub fn #not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#neq_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        self.where_conditions.push(#is_not_null_literal.to_string());
+                        // No parameter binding for IS NOT NULL
+                    }
+                }
+                Ok(self)
+            }
+
+            /// LIKE condition for Option string type (None values not supported)
+            pub fn #like_method(mut self, pattern: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match pattern {
+                    Some(val) => {
+                        self.where_conditions.push(#like_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        return Err(sqlx::Error::Protocol("Cannot use None value for LIKE pattern".into()));
+                    }
+                }
+                Ok(self)
+            }
+
+            /// STARTS WITH condition for Option string type (None values not supported)
+            pub fn #start_with_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#like_condition_literal.to_string());
+                        self.where_args.add_param(format!("{}%", val))?;
+                    }
+                    None => {
+                        return Err(sqlx::Error::Protocol("Cannot use None value for STARTS WITH pattern".into()));
+                    }
+                }
+                Ok(self)
+            }
+
+            /// ENDS WITH condition for Option string type (None values not supported)
+            pub fn #end_with_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#like_condition_literal.to_string());
+                        self.where_args.add_param(format!("%{}", val))?;
+                    }
+                    None => {
+                        return Err(sqlx::Error::Protocol("Cannot use None value for ENDS WITH pattern".into()));
+                    }
+                }
+                Ok(self)
+            }
         }
+    } else {
+        // For non-Option string types, use the original logic
+        let placeholder = get_placeholder_template(database);
 
-        /// Not equal condition
-        pub fn #not_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#neq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
-        }
+        // Pre-generate SQL condition strings at compile time
+        let eq_condition = format!("{} = {}", column_name, placeholder);
+        let neq_condition = format!("{} != {}", column_name, placeholder);
+        let like_condition = format!("{} LIKE {}", column_name, placeholder);
 
-        /// LIKE condition
-        pub fn #like_method(mut self, pattern: &'q str) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#like_condition_literal.to_string());
-            self.where_args.add_param(pattern)?;
-            Ok(self)
-        }
+        let eq_condition_literal = Literal::string(&eq_condition);
+        let neq_condition_literal = Literal::string(&neq_condition);
+        let like_condition_literal = Literal::string(&like_condition);
 
-        /// STARTS WITH condition
-        pub fn #start_with_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#like_condition_literal.to_string());
-            self.where_args.add_param(format!("{}%", value))?;
-            Ok(self)
-        }
+        quote! {
+            /// Equality condition
+            pub fn #eq_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#eq_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
 
-        /// ENDS WITH condition
-        pub fn #end_with_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#like_condition_literal.to_string());
-            self.where_args.add_param(format!("%{}", value))?;
-            Ok(self)
+            /// Not equal condition
+            pub fn #not_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#neq_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
+
+            /// LIKE condition
+            pub fn #like_method(mut self, pattern: &'q str) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#like_condition_literal.to_string());
+                self.where_args.add_param(pattern)?;
+                Ok(self)
+            }
+
+            /// STARTS WITH condition
+            pub fn #start_with_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#like_condition_literal.to_string());
+                self.where_args.add_param(format!("{}%", value))?;
+                Ok(self)
+            }
+
+            /// ENDS WITH condition
+            pub fn #end_with_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#like_condition_literal.to_string());
+                self.where_args.add_param(format!("%{}", value))?;
+                Ok(self)
+            }
         }
     }
 }
@@ -418,65 +520,178 @@ fn generate_numeric_datetime_methods(field_name: &Ident, column_name: &str, data
     let lt_method = quote::format_ident!("{}_lt", field_name);
     let lte_method = quote::format_ident!("{}_lte", field_name);
 
-    // Generate placeholder based on database type
-    let placeholder = get_placeholder_template(database);
+    // Check if this is an Option<T> type
+    if is_option_type_from_type(field_type) {
+        // For Option<T> types, generate runtime checks for None values
+        let is_null_condition = format!("{} IS NULL", column_name);
+        let is_not_null_condition = format!("{} IS NOT NULL", column_name);
+        let is_null_literal = Literal::string(&is_null_condition);
+        let is_not_null_literal = Literal::string(&is_not_null_condition);
 
-    // Pre-generate SQL condition strings at compile time
-    let eq_condition = format!("{} = {}", column_name, placeholder);
-    let neq_condition = format!("{} != {}", column_name, placeholder);
-    let gt_condition = format!("{} > {}", column_name, placeholder);
-    let gte_condition = format!("{} >= {}", column_name, placeholder);
-    let lt_condition = format!("{} < {}", column_name, placeholder);
-    let lte_condition = format!("{} <= {}", column_name, placeholder);
+        // Generate placeholder based on database type for non-null values
+        let placeholder = get_placeholder_template(database);
+        let eq_condition = format!("{} = {}", column_name, placeholder);
+        let neq_condition = format!("{} != {}", column_name, placeholder);
+        let gt_condition = format!("{} > {}", column_name, placeholder);
+        let gte_condition = format!("{} >= {}", column_name, placeholder);
+        let lt_condition = format!("{} < {}", column_name, placeholder);
+        let lte_condition = format!("{} <= {}", column_name, placeholder);
 
-    let eq_condition_literal = Literal::string(&eq_condition);
-    let neq_condition_literal = Literal::string(&neq_condition);
-    let gt_condition_literal = Literal::string(&gt_condition);
-    let gte_condition_literal = Literal::string(&gte_condition);
-    let lt_condition_literal = Literal::string(&lt_condition);
-    let lte_condition_literal = Literal::string(&lte_condition);
+        let eq_condition_literal = Literal::string(&eq_condition);
+        let neq_condition_literal = Literal::string(&neq_condition);
+        let gt_condition_literal = Literal::string(&gt_condition);
+        let gte_condition_literal = Literal::string(&gte_condition);
+        let lt_condition_literal = Literal::string(&lt_condition);
+        let lte_condition_literal = Literal::string(&lte_condition);
 
-    quote! {
-        /// Equality condition
-        pub fn #eq_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#eq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
+        quote! {
+            /// Equality condition for Option type (handles None as IS NULL)
+            pub fn #eq_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#eq_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        self.where_conditions.push(#is_null_literal.to_string());
+                        // No parameter binding for IS NULL
+                    }
+                }
+                Ok(self)
+            }
+
+            /// Not equal condition for Option type (handles None as IS NOT NULL)
+            pub fn #not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#neq_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        self.where_conditions.push(#is_not_null_literal.to_string());
+                        // No parameter binding for IS NOT NULL
+                    }
+                }
+                Ok(self)
+            }
+
+            /// Greater than condition for Option type (None values not supported for comparison)
+            pub fn #gt_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#gt_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        return Err(sqlx::Error::Protocol("Cannot use None value for greater than comparison".into()));
+                    }
+                }
+                Ok(self)
+            }
+
+            /// Greater than or equal condition for Option type (None values not supported for comparison)
+            pub fn #gte_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#gte_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        return Err(sqlx::Error::Protocol("Cannot use None value for greater than or equal comparison".into()));
+                    }
+                }
+                Ok(self)
+            }
+
+            /// Less than condition for Option type (None values not supported for comparison)
+            pub fn #lt_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#lt_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        return Err(sqlx::Error::Protocol("Cannot use None value for less than comparison".into()));
+                    }
+                }
+                Ok(self)
+            }
+
+            /// Less than or equal condition for Option type (None values not supported for comparison)
+            pub fn #lte_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#lte_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        return Err(sqlx::Error::Protocol("Cannot use None value for less than or equal comparison".into()));
+                    }
+                }
+                Ok(self)
+            }
         }
+    } else {
+        // For non-Option types, use the original logic
+        let placeholder = get_placeholder_template(database);
 
-        /// Not equal condition
-        pub fn #not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#neq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
-        }
+        // Pre-generate SQL condition strings at compile time
+        let eq_condition = format!("{} = {}", column_name, placeholder);
+        let neq_condition = format!("{} != {}", column_name, placeholder);
+        let gt_condition = format!("{} > {}", column_name, placeholder);
+        let gte_condition = format!("{} >= {}", column_name, placeholder);
+        let lt_condition = format!("{} < {}", column_name, placeholder);
+        let lte_condition = format!("{} <= {}", column_name, placeholder);
 
-        /// Greater than condition
-        pub fn #gt_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#gt_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
-        }
+        let eq_condition_literal = Literal::string(&eq_condition);
+        let neq_condition_literal = Literal::string(&neq_condition);
+        let gt_condition_literal = Literal::string(&gt_condition);
+        let gte_condition_literal = Literal::string(&gte_condition);
+        let lt_condition_literal = Literal::string(&lt_condition);
+        let lte_condition_literal = Literal::string(&lte_condition);
 
-        /// Greater than or equal condition
-        pub fn #gte_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#gte_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
-        }
+        quote! {
+            /// Equality condition
+            pub fn #eq_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#eq_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
 
-        /// Less than condition
-        pub fn #lt_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#lt_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
-        }
+            /// Not equal condition
+            pub fn #not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#neq_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
 
-        /// Less than or equal condition
-        pub fn #lte_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#lte_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
+            /// Greater than condition
+            pub fn #gt_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#gt_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
+
+            /// Greater than or equal condition
+            pub fn #gte_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#gte_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
+
+            /// Less than condition
+            pub fn #lt_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#lt_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
+
+            /// Less than or equal condition
+            pub fn #lte_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#lte_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
         }
     }
 }
@@ -486,29 +701,77 @@ fn generate_basic_methods(field_name: &Ident, column_name: &str, database: Datab
     let eq_method = quote::format_ident!("{}", field_name);
     let not_method = quote::format_ident!("{}_not", field_name);
 
-    // Generate placeholder based on database type
-    let placeholder = get_placeholder_template(database);
+    // Check if this is an Option<T> type
+    if is_option_type_from_type(field_type) {
+        // For Option<T> types, generate runtime checks for None values
+        let is_null_condition = format!("{} IS NULL", column_name);
+        let is_not_null_condition = format!("{} IS NOT NULL", column_name);
+        let is_null_literal = Literal::string(&is_null_condition);
+        let is_not_null_literal = Literal::string(&is_not_null_condition);
 
-    // Pre-generate SQL condition strings at compile time
-    let eq_condition = format!("{} = {}", column_name, placeholder);
-    let neq_condition = format!("{} != {}", column_name, placeholder);
+        // Generate placeholder based on database type for non-null values
+        let placeholder = get_placeholder_template(database);
+        let eq_condition = format!("{} = {}", column_name, placeholder);
+        let neq_condition = format!("{} != {}", column_name, placeholder);
+        let eq_condition_literal = Literal::string(&eq_condition);
+        let neq_condition_literal = Literal::string(&neq_condition);
 
-    let eq_condition_literal = Literal::string(&eq_condition);
-    let neq_condition_literal = Literal::string(&neq_condition);
+        quote! {
+            /// Equality condition for Option type (handles None as IS NULL)
+            pub fn #eq_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#eq_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        self.where_conditions.push(#is_null_literal.to_string());
+                        // No parameter binding for IS NULL
+                    }
+                }
+                Ok(self)
+            }
 
-    quote! {
-        /// Equality condition
-        pub fn #eq_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#eq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
+            /// Not equal condition for Option type (handles None as IS NOT NULL)
+            pub fn #not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                match value {
+                    Some(val) => {
+                        self.where_conditions.push(#neq_condition_literal.to_string());
+                        self.where_args.add_param(val)?;
+                    }
+                    None => {
+                        self.where_conditions.push(#is_not_null_literal.to_string());
+                        // No parameter binding for IS NOT NULL
+                    }
+                }
+                Ok(self)
+            }
         }
+    } else {
+        // For non-Option types, use the original logic
+        let placeholder = get_placeholder_template(database);
 
-        /// Not equal condition
-        pub fn #not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
-            self.where_conditions.push(#neq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
-            Ok(self)
+        // Pre-generate SQL condition strings at compile time
+        let eq_condition = format!("{} = {}", column_name, placeholder);
+        let neq_condition = format!("{} != {}", column_name, placeholder);
+
+        let eq_condition_literal = Literal::string(&eq_condition);
+        let neq_condition_literal = Literal::string(&neq_condition);
+
+        quote! {
+            /// Equality condition
+            pub fn #eq_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#eq_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
+
+            /// Not equal condition
+            pub fn #not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
+                self.where_conditions.push(#neq_condition_literal.to_string());
+                self.where_args.add_param(value)?;
+                Ok(self)
+            }
         }
     }
 }

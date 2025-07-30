@@ -3,6 +3,8 @@ use futures::StreamExt;
 use sqlx_template::{insert, multi_query, mysql_delete, mysql_select, query, select, update, Columns, DeleteTemplate, MysqlTemplate, SelectTemplate, SqlxTemplate, TableName, UpdateTemplate, UpsertTemplate};
 use sqlx::{prelude::FromRow, types::{chrono, Json}, MySql, MySqlPool};
 use sqlx_template::InsertTemplate;
+
+mod test_null_handling;
 use testcontainers_modules::{mysql, testcontainers::{runners::AsyncRunner, ImageExt}};
 
 
@@ -363,6 +365,16 @@ async fn main() {
     println!("\n=== MySQL Builder Pattern Examples Completed! ===");
     println!("Note: MySQL uses ? placeholders (like SQLite, not $1, $2 like PostgreSQL)");
 
+    // Test NULL value handling
+    println!("\n{}", "=".repeat(50));
+    println!("Running MySQL NULL value handling tests...");
+    println!("{}", "=".repeat(50));
+
+    if let Err(e) = test_null_handling::test_null_value_handling().await {
+        eprintln!("MySQL NULL value handling test failed: {}", e);
+    } else {
+        println!("MySQL NULL value handling tests completed successfully!");
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

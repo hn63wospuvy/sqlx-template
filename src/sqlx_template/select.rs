@@ -9,7 +9,7 @@ use syn::{
 
 use crate::{
     parser,
-    sqlx_template::{check_column_name, get_database_from_ast, get_field_name, get_field_name_as_column, Database},
+    sqlx_template::{check_column_name, get_database_from_ast, get_field_name, get_field_name_as_column, Database, is_option_type_from_type, extract_option_inner_type},
 };
 
 use super::{get_database_type, get_table_name, Scope};
@@ -631,7 +631,21 @@ fn build_query(
                 .map(|field| {
                     let arg_name = field.ident.as_ref().unwrap();
                     let arg_type = &field.ty;
-                    if &arg_type.to_token_stream().to_string() == "String" {
+
+                    // Check if this is an Option<T> type
+                    if is_option_type_from_type(arg_type) {
+                        // For Option<T> types, unwrap to T and generate function that accepts T
+                        if let Some(inner_type) = extract_option_inner_type(arg_type) {
+                            if &inner_type.to_token_stream().to_string() == "String" {
+                                quote! { #arg_name: &'c str }
+                            } else {
+                                quote! { #arg_name: &'c #inner_type }
+                            }
+                        } else {
+                            // Fallback if we can't extract inner type
+                            quote! { #arg_name: &'c #arg_type }
+                        }
+                    } else if &arg_type.to_token_stream().to_string() == "String" {
                         quote! { #arg_name: &'c str }
                     } else {
                         quote! { #arg_name: &'c #arg_type }
@@ -735,7 +749,18 @@ fn build_query(
                                             quote! { .bind(&#arg_name) }
                                         };
 
-                                        let arg_expr = if &arg_type.to_token_stream().to_string() == "String" {
+                                        let arg_expr = if is_option_type_from_type(arg_type) {
+                                            // For Option<T> types, unwrap to T
+                                            if let Some(inner_type) = extract_option_inner_type(arg_type) {
+                                                if &inner_type.to_token_stream().to_string() == "String" {
+                                                    Some(quote! { #arg_name: &str })
+                                                } else {
+                                                    Some(quote! { #arg_name: &#inner_type })
+                                                }
+                                            } else {
+                                                Some(quote! { #arg_name: &#arg_type })
+                                            }
+                                        } else if &arg_type.to_token_stream().to_string() == "String" {
                                             Some(quote! { #arg_name: &str })
                                         } else {
                                             Some(quote! { #arg_name: &#arg_type })

@@ -5,6 +5,8 @@ use sqlx_template::{insert, multi_query, postgres_delete, postgres_select, query
 use sqlx::{migrate::MigrateDatabase, prelude::FromRow, types::{chrono, Json}, Sqlite, SqlitePool};
 use sqlx_template::InsertTemplate;
 
+mod test_null_handling;
+
 const DB_URL: &str = "sqlite://sqlite.db";
 
 use testcontainers_modules::{postgres, testcontainers::runners::AsyncRunner};
@@ -62,11 +64,25 @@ async fn main() {
         ..Default::default()
     };
 
+    let user_4 = User { 
+        email: format!("user4@abc.com"), 
+        password: "password".into(), 
+        org: None, 
+        active: true, 
+        ..Default::default()
+    };
+
     // Insert user
     User::insert(&user_1, &db).await.unwrap();
     User::insert(&user_2, &db).await.unwrap();
+    User::insert(&user_4, &db).await.unwrap();
     insert_new_user("user3@abc.com", "password", org_1.id, &db).await.unwrap();
 
+    let org_page = User::find_page_by_org_order_by_id_desc_and_org_desc(&None, PageRequest::default(),  &db)
+        .await.unwrap()
+        .into_page(PageRequest::default())
+        ;
+    println!("Page Users with no org: {org_page:#?}");
 
     // Query user
     let users = query_all_user_info("user", 0, &db).await.unwrap();
@@ -346,6 +362,16 @@ async fn main() {
     println!("\n=== PostgreSQL Builder Pattern Examples Completed! ===");
     println!("Note: PostgreSQL uses $1, $2, $3... placeholders (not ? like SQLite/MySQL)");
 
+    // Test NULL value handling
+    println!("\n{}", "=".repeat(50));
+    println!("Running PostgreSQL NULL value handling tests...");
+    println!("{}", "=".repeat(50));
+
+    if let Err(e) = test_null_handling::test_null_value_handling().await {
+        eprintln!("PostgreSQL NULL value handling test failed: {}", e);
+    } else {
+        println!("PostgreSQL NULL value handling tests completed successfully!");
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
