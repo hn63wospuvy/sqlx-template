@@ -7,7 +7,6 @@ use sqlx::{FromRow, PgPool};
 #[tp_select_page(by = "org", order = "id desc, org desc")]
 #[tp_select_one(by = "id")]
 #[tp_select_all(by = "email")]
-#[tp_insert]
 pub struct User {
     #[auto]
     pub id: i32,
@@ -246,8 +245,8 @@ pub async fn test_null_value_handling() -> Result<(), Box<dyn std::error::Error>
     // Test 6: Using derive macro for finding all by email (highest priority)
     println!("\n🔍 Test 6: Derive macro for finding all by email");
     
-    println!("  Testing find_all_by_email with email = 'user1@example.com':");
-    let users_by_email = User::find_all_by_email("user1@example.com", &pool).await?;
+    println!("  Testing find_by_email with email = 'user1@example.com':");
+    let users_by_email = User::find_by_email("user1@example.com", &pool).await?;
     println!("    - Found {} users with email 'user1@example.com'", users_by_email.len());
     for user in &users_by_email {
         println!("      - {}: {} (email: {})", user.id, user.name, user.email);

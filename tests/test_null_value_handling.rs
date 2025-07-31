@@ -199,9 +199,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Note: According to the fix, tp_select_page(by = "org") should generate a function
     // that accepts &i32 (not &Option<i32>) for non-NULL cases only
     println!("  Testing find_page_by_org_order_by_id_desc_and_org_desc with org = 1:");
+
+    // Create a simple PageRequest since we don't have access to the full one
+    #[derive(Debug, Clone)]
+    pub struct PageRequest {
+        pub page: i64,
+        pub size: i32,
+        pub count: bool,
+    }
+
+    impl Default for PageRequest {
+        fn default() -> Self {
+            Self {
+                page: 0,
+                size: 10,
+                count: false,
+            }
+        }
+    }
+
+    impl Into<(i64, i32, bool)> for PageRequest {
+        fn into(self) -> (i64, i32, bool) {
+            (self.page, self.size, self.count)
+        }
+    }
+
     let page_result = User::find_page_by_org_order_by_id_desc_and_org_desc(
-        &1, 
-        sqlx_template::PageRequest::default(), 
+        &1,
+        PageRequest::default(),
         &pool
     ).await?;
     println!("  Found {} users in page with org = 1", page_result.0.len());

@@ -78,11 +78,11 @@ async fn main() {
     User::insert(&user_4, &db).await.unwrap();
     insert_new_user("user3@abc.com", "password", org_1.id, &db).await.unwrap();
 
-    let org_page = User::find_page_by_org_order_by_id_desc_and_org_desc(&None, PageRequest::default(),  &db)
-        .await.unwrap()
-        .into_page(PageRequest::default())
-        ;
-    println!("Page Users with no org: {org_page:#?}");
+    // Note: For NULL values, we need to use builder pattern or custom query
+    // let org_page = User::find_page_by_org_order_by_id_desc_and_org_desc(&None, PageRequest::default(),  &db)
+    //     .await.unwrap()
+    //     .into_page(PageRequest::default());
+    // println!("Page Users with no org: {org_page:#?}");
 
     // Query user
     let users = query_all_user_info("user", 0, &db).await.unwrap();
@@ -107,13 +107,13 @@ async fn main() {
 
     // Pagination
     let page_request = PageRequest::default();
-    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&Some(org_1.id), page_request, &db)
+    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&org_1.id, page_request, &db)
         .await
         .unwrap()
         .into_page(page_request);
     println!("Page user: {page:#?}");
 
-    let user = User::find_one_by_group(&None, &db).await.unwrap();
+    // let user = User::find_one_by_group(&None, &db).await.unwrap();
 
 
     // Transaction

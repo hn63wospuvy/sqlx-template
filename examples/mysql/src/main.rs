@@ -81,7 +81,7 @@ async fn main() {
     println!("Query Users: {users:#?}");
 
     // Find one user by group (should be None since no group is set)
-    let user = User::find_one_by_group(&None, &db).await.unwrap();
+    let user = User::find_user_with_no_group(&db).await.unwrap();
 
     // Stream all users order by id
     let mut users = User::stream_order_by_id_desc(&db);
@@ -98,7 +98,7 @@ async fn main() {
 
     // Pagination
     let page_request = PageRequest::default();
-    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&Some(org_1.id), page_request, &db)
+    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&org_1.id, page_request, &db)
         .await
         .unwrap()
         .into_page(page_request);
@@ -457,6 +457,7 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id", returning = "id")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id_email", returning = "id, email")]
 #[tp_select_stream(order = "id desc")]
+#[tp_select_one(where = "`group` is null", fn_name = "find_user_with_no_group")]
 pub struct User {
     #[auto]
     pub id: i32,
