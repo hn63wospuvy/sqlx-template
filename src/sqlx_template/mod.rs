@@ -298,6 +298,36 @@ fn is_option_type(type_path: &syn::TypePath) -> bool {
     }
 }
 
+/// Check if a Type is an Option<T> type
+pub fn is_option_type_from_type(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Path(type_path) => is_option_type(type_path),
+        _ => false,
+    }
+}
+
+/// Extract the inner type T from Option<T>
+pub fn extract_option_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            if segment.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        return Some(inner_ty);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Check if a type string represents an Option type
+pub fn is_option_type_string(type_str: &str) -> bool {
+    let cleaned = type_str.replace(" ", "");
+    cleaned.starts_with("Option<") && cleaned.ends_with(">")
+}
+
 fn gen_debug_code(debug_slow: Option<i32>) -> (TokenStream, TokenStream) {
     match debug_slow {
         Some(0) => {

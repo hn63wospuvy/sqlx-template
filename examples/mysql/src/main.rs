@@ -3,6 +3,8 @@ use futures::StreamExt;
 use sqlx_template::{insert, multi_query, mysql_delete, mysql_select, query, select, update, Columns, DeleteTemplate, MysqlTemplate, SelectTemplate, SqlxTemplate, TableName, UpdateTemplate, UpsertTemplate};
 use sqlx::{prelude::FromRow, types::{chrono, Json}, MySql, MySqlPool};
 use sqlx_template::InsertTemplate;
+
+mod test_null_handling;
 use testcontainers_modules::{mysql, testcontainers::{runners::AsyncRunner, ImageExt}};
 
 
@@ -79,7 +81,7 @@ async fn main() {
     println!("Query Users: {users:#?}");
 
     // Find one user by group (should be None since no group is set)
-    let user = User::find_one_by_group(&None, &db).await.unwrap();
+    let user = User::find_user_with_no_group(&db).await.unwrap();
 
     // Stream all users order by id
     let mut users = User::stream_order_by_id_desc(&db);
@@ -96,7 +98,7 @@ async fn main() {
 
     // Pagination
     let page_request = PageRequest::default();
-    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&Some(org_1.id), page_request, &db)
+    let page = User::find_page_by_org_order_by_id_desc_and_org_desc(&org_1.id, page_request, &db)
         .await
         .unwrap()
         .into_page(page_request);
@@ -363,6 +365,16 @@ async fn main() {
     println!("\n=== MySQL Builder Pattern Examples Completed! ===");
     println!("Note: MySQL uses ? placeholders (like SQLite, not $1, $2 like PostgreSQL)");
 
+    // Test NULL value handling
+    println!("\n{}", "=".repeat(50));
+    println!("Running MySQL NULL value handling tests...");
+    println!("{}", "=".repeat(50));
+
+    if let Err(e) = test_null_handling::test_null_value_handling().await {
+        eprintln!("MySQL NULL value handling test failed: {}", e);
+    } else {
+        println!("MySQL NULL value handling tests completed successfully!");
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -445,6 +457,7 @@ impl <T> IntoPage<T> for (Vec<T>, Option<i64>) {
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id", returning = "id")]
 #[tp_update(by = "id", op_lock = "version", fn_name = "update_user_returning_id_email", returning = "id, email")]
 #[tp_select_stream(order = "id desc")]
+#[tp_select_one(where = "`group` is null", fn_name = "find_user_with_no_group")]
 pub struct User {
     #[auto]
     pub id: i32,
