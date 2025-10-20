@@ -21,6 +21,7 @@ pub struct Page<T> {
 #[tp_update(by = "id", on = "content", where = "access = :sender", returning = "id, sender")]
 // #[tp_update(by = "id", on = "receiver", where = "sender = :sender")]
 // #[tp_upsert(by = "id", on = "sender, content", fn_name = "test1")]
+#[tp_select_page(order = "created_at desc")]
 pub struct Chat {
     pub id: i32,
     pub sender: i32,
