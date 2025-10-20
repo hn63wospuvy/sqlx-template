@@ -405,7 +405,7 @@ fn build_query(
         (true, true) => {
             // Do nothing. Default implemention
         }
-        (true, false) => {
+        (true, false) => { // Order only
             let mut post_fix = format!(
                 "order_by_{}",
                 order_fields
@@ -462,7 +462,7 @@ fn build_query(
             let sql =
                 format!("SELECT {all_fields_str_join} FROM {table_name} ORDER BY {order_str}");
             super::check_valid_single_sql(&sql, db);
-            let count_sql = format!("SELECT COUNT(1) FROM {table_name} ORDER BY {order_str}");
+            let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
@@ -524,14 +524,13 @@ fn build_query(
                                 Ok(query_result?)
                             }
                             pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> core::result::Result<i64, sqlx::Error> {
-                                let sql = #sql;
+                                let sql = #count_sql;
                                 #dbg_before
                                 let count = sqlx::query_scalar(sql)
-                                    #(#total_binds)*
                                     .fetch_one(conn)
                                     .await;
                                 #dbg_after
-                                Ok(query_result?)
+                                Ok(count?)
                             }
 
                             let page = page.into();
