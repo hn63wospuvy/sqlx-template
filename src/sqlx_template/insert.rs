@@ -9,13 +9,15 @@ use crate::sqlx_template::{get_database_from_ast, Database};
 use super::{get_table_name, Scope};
 
 pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, db: Option<Database>) -> syn::Result<TokenStream> {
-    let struct_name = &ast.ident;
+    let struct_name_ident = &ast.ident;
+    let struct_name_str = struct_name_ident.to_string();
     let struct_name = match for_path {
         Some(path) => quote! {#path},
-        None => quote! {#struct_name},
+        None => quote! {#struct_name_ident},
     };
     let mut fields = vec![];
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
+    let instrument_config = super::get_instrument_config(&ast);
     if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
         ..
@@ -71,7 +73,9 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
 
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
+    let instrument_attr_insert = super::gen_instrument_attr(&instrument_config, &struct_name_str, "insert");
     let insert = quote! {
+        #instrument_attr_insert
         pub async fn insert<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> Result<u64, sqlx::Error> {
             let sql = #sql;
             #dbg_before
@@ -88,7 +92,9 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
     
     let insert_returning = if matches!(db, Database::Postgres) {
         super::check_valid_single_sql(&sql_return, db);
+        let instrument_attr_insert_return = super::gen_instrument_attr(&instrument_config, &struct_name_str, "insert_return");
         let insert_returning = quote! {
+            #instrument_attr_insert_return
             pub async fn insert_return<'c, E: sqlx::Executor<'c, Database = #database>>(re: &#struct_name, conn: E) -> Result<#struct_name, sqlx::Error> {
                 let sql = #sql_return;
                 #dbg_before

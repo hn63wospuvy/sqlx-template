@@ -10,10 +10,11 @@ use crate::{parser, sqlx_template::{check_column_name, get_database_from_ast, ge
 use super::get_table_name;
 
 pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: super::Scope, db: Option<Database>) -> syn::Result<TokenStream> {
-    let struct_name = &ast.ident;
+    let struct_name_ident = &ast.ident;
+    let struct_name_str = struct_name_ident.to_string();
     let struct_name = match for_path {
         Some(path) => quote! {#path},
-        None => quote! {#struct_name},
+        None => quote! {#struct_name_ident},
     };
     let table_name = get_table_name(&ast);
     let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
@@ -22,6 +23,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
         panic!("`tp_upsert` is supported for Postgres, SQLite, and MySQL only")
     }
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
+    let instrument_config = super::get_instrument_config(&ast);
 
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
@@ -225,6 +227,10 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 };
                 let fn_name = Ident::new(&fn_name, proc_macro2::Span::call_site());
                 let fn_name_return = Ident::new(&fn_name_return, proc_macro2::Span::call_site());
+                let fn_name_str = fn_name.to_string();
+                let fn_name_return_str = fn_name_return.to_string();
+                let instrument_attr = super::gen_instrument_attr(&instrument_config, &struct_name_str, &fn_name_str);
+                let instrument_attr_return = super::gen_instrument_attr(&instrument_config, &struct_name_str, &fn_name_return_str);
                 let mut fn_args = by_fields
                     .iter()
                     .map(|field| {
@@ -585,6 +591,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         quote! { re: &#struct_name, #(#where_args_vec,)* conn: E }
                     };
                     quote! {
+                        #instrument_attr_return
                         pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args) -> core::result::Result<#struct_name, sqlx::Error> {
                             let sql = #sql_return;
                             #dbg_before
@@ -603,6 +610,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         quote! { re: &#struct_name, #(#where_args_vec,)* conn: E }
                     };
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args) -> core::result::Result<u64, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before

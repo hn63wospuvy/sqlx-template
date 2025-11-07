@@ -29,14 +29,16 @@ pub fn derive_select(
     scope: super::Scope,
     db: Option<Database>,
 ) -> syn::Result<TokenStream> {
-    let struct_name = &ast.ident;
+    let struct_name_ident = &ast.ident;
+    let struct_name_str = struct_name_ident.to_string();
     let struct_name = match for_path {
         Some(path) => quote! {#path},
-        None => quote! {#struct_name},
+        None => quote! {#struct_name_ident},
     };
     let table_name = get_table_name(&ast);
     let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
+    let instrument_config = super::get_instrument_config(&ast);
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
         ..
@@ -65,7 +67,13 @@ pub fn derive_select(
                 let mut fn_name = None;
                 let mut debug_slow = debug_slow.clone();
                 let mut where_stmt_str = None;
+                let mut local_instrument_config: Option<super::InstrumentConfig> = None;
                 for meta in nested {
+                    // Check for instrument attribute first
+                    if let Some(instrument) = super::parse_instrument_from_nested(meta) {
+                        local_instrument_config = Some(instrument);
+                        continue;
+                    }
                     match meta {
                         NestedMeta::Meta(Meta::NameValue(nv)) => {
                             if nv.path.is_ident("by") {
@@ -139,10 +147,14 @@ pub fn derive_select(
                 by_fields.sort_by_key(|x| x.ident.clone());
                 order_fields.sort_by_key(|x| x.0.ident.clone());
 
+                // Use local instrument config if available, otherwise use global
+                let effective_instrument_config = local_instrument_config.as_ref().unwrap_or(&instrument_config);
+
                 let generated = match path.get_ident().unwrap().to_string().as_str() {
                     "tp_select_all" => build_query(
                         SelectType::All,
                         &struct_name,
+                        &struct_name_str,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -151,10 +163,12 @@ pub fn derive_select(
                         where_stmt_str,
                         debug_slow,
                         db,
+                        effective_instrument_config,
                     )?,
                     "tp_select_one" => build_query(
                         SelectType::One,
                         &struct_name,
+                        &struct_name_str,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -163,10 +177,12 @@ pub fn derive_select(
                         where_stmt_str,
                         debug_slow,
                         db,
+                        effective_instrument_config,
                     )?,
                     "tp_select_page" => build_query(
                         SelectType::Page,
                         &struct_name,
+                        &struct_name_str,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -175,10 +191,12 @@ pub fn derive_select(
                         where_stmt_str,
                         debug_slow,
                         db,
+                        effective_instrument_config,
                     )?,
                     "tp_select_stream" => build_query(
                         SelectType::Stream,
                         &struct_name,
+                        &struct_name_str,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -187,10 +205,12 @@ pub fn derive_select(
                         where_stmt_str,
                         debug_slow,
                         db,
+                        effective_instrument_config,
                     )?,
                     "tp_select_count" => build_query(
                         SelectType::Count,
                         &struct_name,
+                        &struct_name_str,
                         &table_name,
                         &all_fields,
                         by_fields,
@@ -199,6 +219,7 @@ pub fn derive_select(
                         where_stmt_str,
                         debug_slow,
                         db,
+                        effective_instrument_config,
                     )?,
                     _ => None,
                 };
@@ -211,23 +232,29 @@ pub fn derive_select(
     }
     functions.push(super::gen_with_doc(build_default_find_all_query(
         &struct_name,
+        &struct_name_str,
         &table_name,
         debug_slow,
         &all_fields,
         db,
+        &instrument_config,
     )));
     functions.push(super::gen_with_doc(build_default_count_all_query(
         &struct_name,
+        &struct_name_str,
         &table_name,
         debug_slow,
         db,
+        &instrument_config,
     )));
     functions.push(super::gen_with_doc(build_default_find_page_all_query(
         &struct_name,
+        &struct_name_str,
         &table_name,
         debug_slow,
         &all_fields,
         db,
+        &instrument_config,
     )));
 
     // Check for tp_select_builder attribute and generate builder if present
@@ -265,10 +292,12 @@ pub fn derive_select(
 
 fn build_default_find_all_query(
     struct_name: &proc_macro2::TokenStream,
+    struct_name_str: &str,
     table_name: &str,
     debug_slow: Option<i32>,
     all_fields: &Vec<&Field>,
     db: Database,
+    instrument_config: &super::InstrumentConfig,
 ) -> proc_macro2::TokenStream {
     let all_fields_str = all_fields
         .iter()
@@ -279,7 +308,9 @@ fn build_default_find_all_query(
     super::check_valid_single_sql(&sql, db);
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
+    let instrument_attr = super::gen_instrument_attr(instrument_config, struct_name_str, "find_all");
     let expanded = quote! {
+        #instrument_attr
         pub async fn find_all<'c, E: sqlx::Executor<'c, Database = #database>>( conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
             let sql = #sql;
             #dbg_before
@@ -295,10 +326,12 @@ fn build_default_find_all_query(
 
 fn build_default_find_page_all_query(
     struct_name: &proc_macro2::TokenStream,
+    struct_name_str: &str,
     table_name: &str,
     debug_slow: Option<i32>,
     all_fields: &Vec<&Field>,
     db: Database,
+    instrument_config: &super::InstrumentConfig,
 ) -> proc_macro2::TokenStream {
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
@@ -313,7 +346,9 @@ fn build_default_find_page_all_query(
     };
     super::check_valid_single_sql(&sql, db);
     let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
+    let instrument_attr = super::gen_instrument_attr(instrument_config, struct_name_str, "find_page_all");
     let expanded = quote! {
+        #instrument_attr
         pub async fn find_page_all<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
             async fn data_query<'c, E: sqlx::Executor<'c, Database = #database>>(offset: i64, limit: i32, conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
                 let sql = #sql;
@@ -358,14 +393,18 @@ fn build_default_find_page_all_query(
 
 fn build_default_count_all_query(
     struct_name: &proc_macro2::TokenStream,
+    struct_name_str: &str,
     table_name: &str,
     debug_slow: Option<i32>,
     db: Database,
+    instrument_config: &super::InstrumentConfig,
 ) -> proc_macro2::TokenStream {
     let sql = format!("SELECT COUNT(1) FROM {table_name}");
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
+    let instrument_attr = super::gen_instrument_attr(instrument_config, struct_name_str, "count_all");
     let expanded = quote! {
+        #instrument_attr
         pub async fn count_all<'c, E: sqlx::Executor<'c, Database = #database>>( conn: E) -> Result<i64, sqlx::Error> {
             let sql = #sql;
             #dbg_before
@@ -382,6 +421,7 @@ fn build_default_count_all_query(
 fn build_query(
     qtype: SelectType,
     struct_name: &proc_macro2::TokenStream,
+    struct_name_str: &str,
     table_name: &str,
     all_fields: &Vec<&Field>,
     by_fields: Vec<Field>,
@@ -390,6 +430,7 @@ fn build_query(
     where_stmt_str: Option<String>,
     debug_slow: Option<i32>,
     db: Database,
+    instrument_config: &super::InstrumentConfig,
 ) -> syn::Result<Option<proc_macro2::TokenStream>> {
     let database = super::get_database_type(db);
     let (dbg_before, dbg_after) = super::gen_debug_code(debug_slow);
@@ -463,9 +504,12 @@ fn build_query(
                 format!("SELECT {all_fields_str_join} FROM {table_name} ORDER BY {order_str}");
             super::check_valid_single_sql(&sql, db);
             let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
+            let fn_name_str = fn_name.to_string();
+            let instrument_attr = super::gen_instrument_attr(instrument_config, struct_name_str, &fn_name_str);
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> core::result::Result<Vec<#struct_name>, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
@@ -479,6 +523,7 @@ fn build_query(
                 }
                 SelectType::One => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> core::result::Result<Option<#struct_name>, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
@@ -512,6 +557,7 @@ fn build_query(
                         .bind(paging_offset)
                     });
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>( page: impl Into<(i64, i32, bool)>, conn: E) -> core::result::Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
                             pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( paging_offset: i64, paging_limit: i32, conn: E) -> core::result::Result<Vec<#struct_name>, sqlx::Error> {
                                 let sql = #paging_sql;
@@ -555,6 +601,7 @@ fn build_query(
                 }
                 SelectType::Stream => {
                     quote! {
+                        #instrument_attr
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#struct_name, sqlx::Error>> {
                             let sql = #sql;
                             #dbg_before
@@ -852,9 +899,12 @@ fn build_query(
             } else {
                 quote! {#(#fn_args),* ,}
             };
+            let fn_name_str = fn_name.to_string();
+            let instrument_attr = super::gen_instrument_attr(instrument_config, struct_name_str, &fn_name_str);
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
@@ -869,6 +919,7 @@ fn build_query(
                 }
                 SelectType::One => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> Result<Option<#struct_name>, sqlx::Error> {
                             let sql = #sql;
                             #dbg_before
@@ -914,6 +965,7 @@ fn build_query(
                         .collect::<Vec<_>>();
                     let fn_args_name_clone = fn_args_name.clone();
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>(#args_signature page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
                             pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature paging_offset: i64, paging_limit: i32, conn: E) -> Result<Vec<#struct_name>, sqlx::Error> {
                                 let sql = #paging_sql;
@@ -955,6 +1007,7 @@ fn build_query(
                 }
                 SelectType::Stream => {
                     quote! {
+                        #instrument_attr
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> futures::stream::BoxStream<'c, Result<#struct_name, sqlx::Error>> {
                             let sql = #sql;
                             #dbg_before
@@ -968,6 +1021,7 @@ fn build_query(
                 }
                 SelectType::Count => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> Result<i64, sqlx::Error> {
                             let sql = #count_sql;
                             #dbg_before

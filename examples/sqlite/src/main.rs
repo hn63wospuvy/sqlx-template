@@ -582,3 +582,64 @@ pub async fn query_all_user_info(name: &str, org: i32) -> Vec<User> {}
 pub fn query_user_org(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
 
 
+// ============================================
+// INSTRUMENT ATTRIBUTE EXAMPLES
+// ============================================
+
+/// Example 1: Global instrument attribute (applies to all generated functions)
+/// Using instrument = true will add tracing without skipping any parameters
+#[derive(SqliteTemplate, FromRow, Debug, Clone)]
+#[table("products")]
+#[instrument = true]  // Global: All functions get #[instrument(name = "Product::{fn_name}")]
+#[tp_select_all(by = "category")]
+#[tp_select_one(by = "id")]
+pub struct Product {
+    #[auto]
+    pub id: i32,
+    pub name: String,
+    pub category: String,
+    pub price: f64,
+}
+
+/// Example 2: Global instrument with skip_all (skips all function parameters from trace)
+#[derive(SqliteTemplate, FromRow, Debug, Clone)]
+#[table("orders")]
+#[instrument = "skip_all"]  // Global: All functions skip all parameters
+#[tp_select_all(by = "user_id")]
+#[tp_update(by = "id", on = "status")]
+pub struct Order {
+    #[auto]
+    pub id: i32,
+    pub user_id: i32,
+    pub status: String,
+    pub total: f64,
+}
+
+/// Example 3: Function-specific instrument (overrides global setting)
+#[derive(SqliteTemplate, FromRow, Debug, Clone)]
+#[table("logs")]
+#[instrument = true]  // Global default
+#[tp_select_all(by = "level", instrument = "skip(conn)")]  // Function-level: skip only conn parameter
+#[tp_select_one(by = "id", instrument = "skip_all")]  // Function-level: skip all parameters
+pub struct Log {
+    #[auto]
+    pub id: i32,
+    pub level: String,
+    pub message: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Example 4: Mixed - some functions with instrument, others use global
+#[derive(SqliteTemplate, FromRow, Debug, Clone)]
+#[table("sessions")]
+#[tp_select_one(by = "token")]  // No instrument - won't trace
+#[tp_update(by = "id", on = "last_activity", instrument = true)]  // Trace this function
+#[tp_delete(by = "id", instrument = "skip(conn)")]  // Trace but skip conn parameter
+pub struct Session {
+    #[auto]
+    pub id: i32,
+    pub token: String,
+    pub user_id: i32,
+    pub last_activity: DateTime<Utc>,
+}
+

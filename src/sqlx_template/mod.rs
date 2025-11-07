@@ -39,6 +39,14 @@ pub(super) enum Database {
     Any
 }
 
+#[derive(Debug, Clone)]
+pub(super) enum InstrumentConfig {
+    None,
+    Enabled,
+    SkipAll,
+    Skip(String),
+}
+
 pub(super) fn create_ident(name: &str) -> Ident {
     Ident::new_raw(&name.to_lowercase(), Span::call_site())
 }
@@ -245,6 +253,53 @@ pub fn get_debug_slow_from_table_scope(ast: &DeriveInput) -> Option<i32> {
     }
 }
 
+pub fn get_instrument_config(ast: &DeriveInput) -> InstrumentConfig {
+    let instruments : Vec<InstrumentConfig> = ast
+        .attrs
+        .iter()
+        .filter_map(|attr| {
+            if let Ok(meta) = attr.parse_meta() {
+                match meta {
+                    Meta::NameValue(MetaNameValue { path, lit, .. }) if path.is_ident("instrument") => {
+                        match lit {
+                            // instrument = true
+                            Lit::Bool(lit_bool) => {
+                                if lit_bool.value {
+                                    Some(InstrumentConfig::Enabled)
+                                } else {
+                                    Some(InstrumentConfig::None)
+                                }
+                            }
+                            // instrument = "skip_all" hoặc instrument = "skip(self, ...)"
+                            Lit::Str(lit_str) => {
+                                let value = lit_str.value();
+                                if value == "skip_all" {
+                                    Some(InstrumentConfig::SkipAll)
+                                } else if value.starts_with("skip(") && value.ends_with(")") {
+                                    Some(InstrumentConfig::Skip(value))
+                                } else {
+                                    panic!("Invalid instrument attribute value: '{}'. Expected 'skip_all' or 'skip(...)'", value);
+                                }
+                            }
+                            _ => {
+                                panic!("Invalid instrument attribute. Expected boolean or string value.");
+                            }
+                        }
+                    }
+                    _ => None
+                }
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    match instruments.len() {
+        0 => InstrumentConfig::None,
+        1 => instruments.into_iter().next().unwrap(),
+        _ => panic!("More than one instrument attribute was found"),
+    }
+}
+
 fn check_fields<'a>(fields_from_attr: &Vec<&'a str>, all_fields: Vec<&'a Field>) -> Vec<Field> {
     let by_fields = all_fields
         .iter()
@@ -386,6 +441,75 @@ fn gen_debug_code(debug_slow: Option<i32>) -> (TokenStream, TokenStream) {
     }
 }
 
+pub(super) fn gen_instrument_attr(config: &InstrumentConfig, struct_name: &str, fn_name: &str) -> TokenStream {
+    #[cfg(feature = "tracing")]
+    {
+        match config {
+            InstrumentConfig::None => quote! {},
+            InstrumentConfig::Enabled => {
+                let instrument_name = format!("{}::{}", struct_name, fn_name);
+                quote! {
+                    #[tracing::instrument(name = #instrument_name)]
+                }
+            },
+            InstrumentConfig::SkipAll => {
+                let instrument_name = format!("{}::{}", struct_name, fn_name);
+                quote! {
+                    #[tracing::instrument(name = #instrument_name, skip_all)]
+                }
+            },
+            InstrumentConfig::Skip(skip_args) => {
+                let instrument_name = format!("{}::{}", struct_name, fn_name);
+                // Parse skip_args to extract the actual arguments
+                // skip_args should be in format "skip(self, arg1, arg2, ...)"
+                let inner = &skip_args[5..skip_args.len()-1]; // Remove "skip(" and ")"
+                let skip_params = inner.split(',')
+                    .map(|s| s.trim())
+                    .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
+                    .collect::<Vec<_>>();
+                quote! {
+                    #[tracing::instrument(name = #instrument_name, skip(#(#skip_params),*))]
+                }
+            }
+        }
+    }
+    
+    #[cfg(not(feature = "tracing"))]
+    {
+        // Avoid unused variable warning
+        let _ = (config, struct_name, fn_name);
+        quote! {}
+    }
+}
+
+/// Parse instrument config from NestedMeta (used in tp_* attributes)
+pub(super) fn parse_instrument_from_nested(nested: &NestedMeta) -> Option<InstrumentConfig> {
+    match nested {
+        NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) if path.is_ident("instrument") => {
+            match lit {
+                Lit::Bool(lit_bool) => {
+                    Some(if lit_bool.value {
+                        InstrumentConfig::Enabled
+                    } else {
+                        InstrumentConfig::None
+                    })
+                }
+                Lit::Str(lit_str) => {
+                    let value = lit_str.value();
+                    if value == "skip_all" {
+                        Some(InstrumentConfig::SkipAll)
+                    } else if value.starts_with("skip(") && value.ends_with(")") {
+                        Some(InstrumentConfig::Skip(value))
+                    } else {
+                        panic!("Invalid instrument attribute value: '{}'. Expected 'skip_all' or 'skip(...)'", value);
+                    }
+                }
+                _ => panic!("Invalid instrument attribute. Expected boolean or string value.")
+            }
+        }
+        _ => None
+    }
+}
 
 
 pub fn table_name_derive(ast: &DeriveInput) -> syn::Result<TokenStream> {

@@ -28,6 +28,7 @@
 - Enhanced RETURNING clause support with specific column selection.
 - Support for placeholder parameters in WHERE conditions.
 - Improved function name generation based on query parameters.
+- **Tracing integration** with `#[instrument]` attribute for observability (requires `tracing` feature).
 
 ## Requirements
 
@@ -424,6 +425,65 @@ Custom conditions allow you to define complex SQL expressions that go beyond sim
 - **Performance**: Compiled to efficient SQL with proper placeholders
 - **Database agnostic**: Works with PostgreSQL, MySQL, SQLite
 - **Custom logic**: Complex SQL expressions with custom conditions
+
+## Tracing Integration
+
+The `instrument` attribute allows automatic addition of `#[tracing::instrument]` attributes to generated functions for observability and debugging.
+
+### Enable Tracing
+
+Add the `tracing` feature to your `Cargo.toml`:
+
+```toml
+[dependencies]
+sqlx-template = { version = "0.1", features = ["tracing"] }
+tracing = "0.1"
+```
+
+### Usage Examples
+
+```rust
+// Global instrument for all generated functions
+#[derive(SqliteTemplate, FromRow)]
+#[table("users")]
+#[instrument = true]  // All functions traced
+#[tp_select_all(by = "name")]
+#[tp_insert]
+pub struct User {
+    pub id: i32,
+    pub name: String,
+}
+
+// Global with skip_all (skip parameters from trace)
+#[derive(SqliteTemplate, FromRow)]
+#[table("logs")]
+#[instrument = "skip_all"]
+#[tp_select_all]
+pub struct Log {
+    pub id: i32,
+    pub message: String,
+}
+
+// Function-specific override
+#[derive(SqliteTemplate, FromRow)]
+#[table("sessions")]
+#[instrument = true]  // Global default
+#[tp_select_one(by = "token", instrument = "skip(conn)")]  // Skip only conn
+#[tp_update(by = "id", on = "last_activity", instrument = "skip_all")]
+pub struct Session {
+    pub id: i32,
+    pub token: String,
+}
+```
+
+**Instrument Name Format**: `{StructName}::{function_name}`
+- Examples: `User::find_all_by_name`, `Session::find_one_by_token`
+
+**Attribute Values**:
+- Global level: `true` or `"skip_all"`
+- Function level: `true`, `"skip_all"`, or `"skip(param1, param2, ...)"`
+
+See [Tracing Documentation](docs/tracing_instrument.md) for detailed examples.
 
 ## Features
 

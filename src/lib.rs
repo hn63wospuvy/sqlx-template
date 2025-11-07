@@ -86,7 +86,7 @@ mod parser;
 ///
 
 
-#[proc_macro_derive(InsertTemplate, attributes(table, auto, debug_slow, db))]
+#[proc_macro_derive(InsertTemplate, attributes(table, auto, debug_slow, db, instrument, tp_insert))]
 pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::insert::derive_insert(&input, None, sqlx_template::Scope::Struct, None) {
@@ -177,7 +177,7 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// This macro relies on `sqlx`, so you need to add `sqlx` to your `[dependencies]` in `Cargo.toml`
 /// and properly configure the database connection before using the generated update methods.
 
-#[proc_macro_derive(UpdateTemplate, attributes(table, tp_update, tp_update_builder, debug_slow, db, tp_update_builder))]
+#[proc_macro_derive(UpdateTemplate, attributes(table, tp_update, tp_update_builder, debug_slow, db, tp_update_builder, instrument))]
 pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::update::derive_update(&input, None, sqlx_template::Scope::Struct, None) {
@@ -263,7 +263,7 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated delete methods.
 ///
 
-#[proc_macro_derive(DeleteTemplate, attributes(table, tp_delete, tp_delete_builder, debug_slow, db, tp_delete_builder))]
+#[proc_macro_derive(DeleteTemplate, attributes(table, tp_delete, tp_delete_builder, debug_slow, db, tp_delete_builder, instrument))]
 pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::delete::derive_delete(&input, None, sqlx_template::Scope::Struct, None) {
@@ -447,7 +447,7 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated query methods.
 ///
 
-#[proc_macro_derive(SelectTemplate, attributes(table, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_select_builder, db, tp_select_builder, auto))]
+#[proc_macro_derive(SelectTemplate, attributes(table, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_select_builder, db, tp_select_builder, auto, instrument))]
 pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::select::derive_select(&input, None, sqlx_template::Scope::Struct, None) {
@@ -660,7 +660,7 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// This macro relies on `sqlx` and database-specific upsert syntax. Make sure your target
 /// database supports the generated upsert statements.
 ///
-#[proc_macro_derive(UpsertTemplate, attributes(table, tp_upsert, debug_slow, db))]
+#[proc_macro_derive(UpsertTemplate, attributes(table, tp_upsert, debug_slow, db, instrument))]
 pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::upsert::derive_upsert(&input, None, sqlx_template::Scope::Struct, None) {
@@ -751,7 +751,7 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// This is the most convenient macro to use when you need comprehensive database operations
 /// for a struct. It combines all individual template macros into one.
 ///
-#[proc_macro_derive(SqlxTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, tp_update_builder, tp_select_builder, tp_delete_builder, auto, debug_slow, db))]
+#[proc_macro_derive(SqlxTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, tp_update_builder, tp_select_builder, tp_delete_builder, auto, debug_slow, db, instrument, tp_insert))]
 pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, None) {
@@ -832,7 +832,7 @@ pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// This macro is specifically designed for PostgreSQL and may not work with other databases.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(PostgresTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder))]
+#[proc_macro_derive(PostgresTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert))]
 pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Postgres)) {
@@ -914,7 +914,7 @@ pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 /// This macro is specifically designed for MySQL and generates MySQL-compatible SQL syntax.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(MysqlTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder))]
+#[proc_macro_derive(MysqlTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert))]
 pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Mysql)) {
@@ -1011,7 +1011,7 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// This macro is specifically designed for SQLite and generates SQLite-compatible SQL syntax.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(SqliteTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder))]
+#[proc_macro_derive(SqliteTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert))]
 pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Sqlite)) {
@@ -1092,7 +1092,7 @@ pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// of database-specific optimizations. Use database-specific templates for better performance
 /// when targeting a single database type.
 ///
-#[proc_macro_derive(AnyTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow))]
+#[proc_macro_derive(AnyTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, instrument, tp_insert))]
 pub fn any_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Any)) {

@@ -539,6 +539,69 @@ pub fn query_user_org(name: &str, org: i32) -> Stream<(i32, String)> {} // Strea
 pub fn query_user_org1(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
 
 
+// ============================================
+// INSTRUMENT ATTRIBUTE EXAMPLES FOR POSTGRES
+// ============================================
+
+/// Example 1: Global instrument for all functions
+/// Demonstrates basic tracing with struct name in trace name
+#[derive(PostgresTemplate, FromRow, Debug, Clone)]
+#[table("products")]
+#[instrument = true]  // All functions: #[instrument(name = "Product::{fn_name}")]
+#[tp_select_all(by = "category")]
+#[tp_select_one(by = "id")]
+#[tp_insert]
+pub struct Product {
+    #[auto]
+    pub id: i32,
+    pub name: String,
+    pub category: String,
+    pub price: f64,
+}
+
+/// Example 2: Global skip_all - useful for high-traffic functions
+#[derive(PostgresTemplate, FromRow, Debug, Clone)]
+#[table("audit_logs")]
+#[instrument = "skip_all"]  // Skip all parameters to reduce trace overhead
+#[tp_select_all(by = "user_id")]
+#[tp_select_count(by = "action")]
+#[tp_insert]
+pub struct AuditLog {
+    #[auto]
+    pub id: i32,
+    pub user_id: i32,
+    pub action: String,
+    pub details: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Example 3: Function-specific overrides
+#[derive(PostgresTemplate, FromRow, Debug, Clone)]
+#[table("api_tokens")]
+#[instrument = true]  // Default for all
+#[tp_select_one(by = "token", instrument = "skip(conn)")]  // Skip database connection from trace
+#[tp_update(by = "id", on = "last_used", instrument = "skip_all")]  // Skip all for update
+#[tp_delete(by = "token", instrument = true)]  // Explicit trace with all params
+pub struct ApiToken {
+    #[auto]
+    pub id: i32,
+    pub token: String,
+    pub user_id: i32,
+    pub last_used: DateTime<Utc>,
+}
+
+/// Example 4: No global, only function-specific
+#[derive(PostgresTemplate, FromRow, Debug, Clone)]
+#[table("cache_entries")]
+#[tp_select_one(by = "key")]  // No tracing
+#[tp_update(by = "key", on = "value", instrument = "skip(re, conn)")]  // Trace but skip parameters
+#[tp_delete(by = "key", instrument = true)]  // Full tracing
+pub struct CacheEntry {
+    pub key: String,
+    pub value: String,
+    pub expires_at: DateTime<Utc>,
+}
+
 
 
 
