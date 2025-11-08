@@ -3,7 +3,12 @@
 [package]
 name = "sqlite-tracing"
 version = "0.1.0"
+license = "MIT OR Apache-2.0"
 edition = "2021"
+repository = "https://github.com/hn63wospuvy/sqlx-template"
+keywords = ["database", "async", "postgres", "mysql", "sqlite"]
+categories = ["database", "asynchronous"]
+authors = ["hg <hn63wospuvy@gmail.com>"]
 
 [[bin]]
 name = "sqlite-tracing"

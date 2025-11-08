@@ -1,7 +1,7 @@
 use sqlx_template::SqliteTemplate;
 
 pub mod builder;
-pub mod builder_expanded;
+// pub mod builder_expanded;
 
 #[derive(sqlx::FromRow, Clone, Debug, SqliteTemplate)]
 #[table("users")]

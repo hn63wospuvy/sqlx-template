@@ -2,7 +2,7 @@
 members = [
     ".", "examples/postgres", "examples/sqlite", "examples/mysql"
 ]
-exclude = ["examples/sqlite-tracing", "examples/test-simple"]
+exclude = ["examples/sqlite-tracing"]
 
 
 [workspace.package]

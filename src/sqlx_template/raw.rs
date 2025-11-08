@@ -77,62 +77,76 @@ fn get_query_string(nested_meta: Option<&NestedMeta>) -> syn::Result<String> {
     Ok(res)
 }
 
-fn get_debug_slow(nested_meta: Option<&NestedMeta>) -> syn::Result<i32> { 
-    let res = match nested_meta {
-        Some(NestedMeta::Lit(Lit::Int(slow_in_ms))) => {
-            slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"))?
-        }
-        Some(NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, eq_token}))) => {
-            let path_name = path.segments
-            .first()
-            .expect("Invalid name-value marco at second attribute")
-            .ident
-            .to_string()
-            ;
-            if "debug" != path_name.as_str() {
-                panic!("Second attribute name must be 'debug'");
+fn get_debug_slow(args: &AttributeArgs) -> syn::Result<i32> {
+    for arg in args {
+        match arg {
+            NestedMeta::Lit(Lit::Int(slow_in_ms)) => {
+                return slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"));
             }
-            match lit {
-                Lit::Int(slow_in_ms) => {
-                    slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"))?
-                },
-                _ => panic!("Expected a number for the query in the second name-value attribute")
+            NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, ..})) => {
+                if path.is_ident("debug") {
+                    match lit {
+                        Lit::Int(slow_in_ms) => {
+                            return slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"));
+                        },
+                        _ => panic!("Expected a number for debug attribute")
+                    }
+                }
+            }
+            NestedMeta::Meta(Meta::Path(path)) => {
+                if path.is_ident("debug") {
+                    return Ok(0);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(-1)
+}
+
+fn parse_instrument_config(args: &AttributeArgs) -> super::InstrumentConfig {
+    for arg in args {
+        if let NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, ..})) = arg {
+            if path.is_ident("instrument") {
+                match lit {
+                    Lit::Str(lit_str) => {
+                        let value = lit_str.value();
+                        return super::InstrumentConfig::Skip(value);
+                    }
+                    Lit::Bool(lit_bool) => {
+                        if lit_bool.value() {
+                            return super::InstrumentConfig::Enabled;
+                        } else {
+                            return super::InstrumentConfig::None;
+                        }
+                    }
+                    _ => panic!("instrument attribute must be a string or boolean")
+                }
+            }
+        } else if let NestedMeta::Meta(Meta::Path(path)) = arg {
+            if path.is_ident("instrument") {
+                return super::InstrumentConfig::Enabled;
             }
         }
-        Some(NestedMeta::Meta(Meta::Path(path))) => {
-            let path_name = path.segments
-            .first()
-            .expect("Invalid name-value marco at second attribute")
-            .ident
-            .to_string()
-            ;
-            if "debug" != path_name.as_str() {
-                panic!("Second attribute name must be 'debug'");
-            }
-            0
-        }
-        _ => -1
-    };
-    Ok(res)
+    }
+    super::InstrumentConfig::SkipAll
 }
 
 pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: Option<Database>) -> syn::Result<TokenStream> { 
     let query_string = get_query_string(args.get(0))?; 
-    let debug_slow = get_debug_slow(args.get(1))?; 
+    let debug_slow = get_debug_slow(&args)?; 
     let db = db.unwrap_or_else(|| super::get_database_from_input_fn(&input));
+    
+    // Parse instrument configuration from attributes
+    let instrument_config = parse_instrument_config(&args);
+    
     // Extract the function name and arguments 
     let fn_name = &input.sig.ident;
     
     // Generate instrument attribute for tracing
     // IMPORTANT: cfg! must be OUTSIDE quote! macro
     let fn_name_str = fn_name.to_string();
-    let instrument_attr = if cfg!(feature = "tracing") {
-        quote! {
-            #[tracing::instrument(name = #fn_name_str, skip_all)]
-        }
-    } else {
-        quote! {}
-    };
+    let instrument_attr = super::gen_instrument_attr(&instrument_config, &fn_name_str, &fn_name_str);
     
     let fn_args = &input.sig.inputs; 
     let mut map_args = HashMap::new(); 
@@ -200,9 +214,12 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
 
 pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: Option<Database>) -> syn::Result<TokenStream> {
     let query_string = get_query_string(args.first())?;
-    let debug_slow = get_debug_slow(args.get(1))?;
+    let debug_slow = get_debug_slow(&args)?;
     
     let db = db.unwrap_or_else(|| super::get_database_from_input_fn(&input));
+
+    // Parse instrument configuration from attributes
+    let instrument_config = parse_instrument_config(&args);
 
     // Extract the function name and arguments
     let fn_name = &input.sig.ident;
@@ -210,13 +227,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
     // Generate instrument attribute for tracing
     // IMPORTANT: cfg! must be OUTSIDE quote! macro
     let fn_name_str = fn_name.to_string();
-    let instrument_attr = if cfg!(feature = "tracing") {
-        quote! {
-            #[tracing::instrument(name = #fn_name_str, skip_all)]
-        }
-    } else {
-        quote! {}
-    };
+    let instrument_attr = super::gen_instrument_attr(&instrument_config, &fn_name_str, &fn_name_str);
     
     let fn_args = &input.sig.inputs;
     let fn_args_with_comma = if fn_args.is_empty() {
