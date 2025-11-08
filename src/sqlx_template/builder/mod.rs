@@ -159,6 +159,7 @@ pub struct BuilderConfig {
     pub debug_slow: Option<i32>,
     pub fields: Vec<Field>,
     pub custom_conditions: Vec<CustomCondition>,
+    pub instrument_config: super::InstrumentConfig,
 }
 
 impl BuilderConfig {
@@ -166,6 +167,7 @@ impl BuilderConfig {
         let struct_name = ast.ident.to_string();
         let table_name = super::get_table_name(ast);
         let debug_slow = super::get_debug_slow_from_table_scope(ast);
+        let instrument_config = super::get_instrument_config(ast);
         
         let fields = if let syn::Data::Struct(syn::DataStruct {
             fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
@@ -184,6 +186,7 @@ impl BuilderConfig {
             debug_slow,
             fields,
             custom_conditions: Vec::new(),
+            instrument_config,
         }
     }
 

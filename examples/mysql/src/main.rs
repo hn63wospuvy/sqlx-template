@@ -605,7 +605,6 @@ pub struct Event {
 /// Mix global settings with per-function overrides
 #[derive(MysqlTemplate, FromRow, Debug, Clone)]
 #[table("sessions")]
-#[instrument = true]  // Default: trace all
 #[tp_select_one(by = "token", instrument = "skip(conn)")]  // Override: skip conn param
 #[tp_update(by = "id", on = "last_activity", instrument = "skip_all")]  // Override: skip all
 #[tp_delete(by = "token", instrument = true)]  // Explicit: trace all params

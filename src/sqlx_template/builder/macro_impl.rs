@@ -35,6 +35,7 @@ fn generate_placeholder_replacement_fn(database: Database) -> TokenStream {
 /// Generate select builder implementation cho struct
 pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -> TokenStream {
     let struct_name = &input.ident;
+    let struct_name_str = struct_name.to_string();
     let builder_name = quote::format_ident!("{}SelectBuilder", struct_name);
     let args_struct_name = quote::format_ident!("{}QueryBuilderArgs", struct_name);
     let table_name = &config.table_name;
@@ -79,6 +80,53 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
     // Generate placeholder replacement function based on database type
     let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
+
+    // Generate instrument attributes for tracing
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro to check proc macro's feature, not user's feature
+    let instrument_name_find_one = format!("{}::builder_find_one", &struct_name_str);
+    let instrument_attr_find_one = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_find_one, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
+    let instrument_name_find_all = format!("{}::builder_find_all", &struct_name_str);
+    let instrument_attr_find_all = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_find_all, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
+    let instrument_name_find_page = format!("{}::builder_find_page", &struct_name_str);
+    let instrument_attr_find_page = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_find_page, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
+    let instrument_name_count = format!("{}::builder_count", &struct_name_str);
+    let instrument_attr_count = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_count, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
+    let instrument_name_stream = format!("{}::builder_stream", &struct_name_str);
+    let instrument_attr_stream = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_stream, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
 
     // Build builder with simple parameter storage and manual binding
     quote! {
@@ -175,7 +223,9 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
             /// Execute query và return single result
             /// Note: This uses parameterized queries with proper parameter binding
-            pub async fn find_one<'c, E>(self, executor: E) -> Result<Option<#struct_name>, sqlx::Error>
+            #instrument_attr_find_one
+            #[inline]
+            pub async fn find_one<'c, E>(self, conn: E) -> Result<Option<#struct_name>, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
@@ -183,12 +233,14 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 let where_args = self.where_args;
 
                 // Manually bind parameters
-                sqlx::query_as_with(&sql, *where_args.0).fetch_optional(executor).await
+                sqlx::query_as_with(&sql, *where_args.0).fetch_optional(conn).await
             }
 
             /// Execute query và return all results
             /// Note: This uses parameterized queries with proper parameter binding
-            pub async fn find_all<'c, E>(self, executor: E) -> Result<Vec<#struct_name>, sqlx::Error>
+            #instrument_attr_find_all
+            #[inline]
+            pub async fn find_all<'c, E>(self, conn: E) -> Result<Vec<#struct_name>, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
@@ -197,14 +249,16 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
                 // Manually bind parameters
                 sqlx::query_as_with(&sql, *where_args.0)
-                    .fetch_all(executor)
+                    .fetch_all(conn)
                     .await
             }
 
+            #instrument_attr_find_page
+            #[inline]
             pub async fn find_page<'c, E>(
                 self,
                 page: impl Into<(i64, i32, bool)>,
-                executor: E,
+                conn: E,
             ) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type> +'c + Copy,
@@ -216,7 +270,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
                 let res = if count {
-                    let data = sqlx::query_as_with(&sql, *self.where_args.0.clone()).fetch_all(executor).await?;
+                    let data = sqlx::query_as_with(&sql, *self.where_args.0.clone()).fetch_all(conn).await?;
                     if data.is_empty() && offset == 0 {
                         (data, Some(0))
                     } else {
@@ -228,19 +282,21 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                             let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
                             count_sql.push_str(&replaced_where);
                         }
-                        let count = sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(executor).await?;
+                        let count = sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(conn).await?;
                         (data, Some(count))
                     }
                 } else {
-                    let data = sqlx::query_as_with(&sql, *self.where_args.0).fetch_all(executor).await?;
+                    let data = sqlx::query_as_with(&sql, *self.where_args.0).fetch_all(conn).await?;
                     (data, None)
                 };
                 Ok(res)
             }
 
+            #instrument_attr_count
+            #[inline]
             pub async fn count<'c, E>(
                 self,
-                executor: E,
+                conn: E,
             ) -> Result<i64, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
@@ -252,13 +308,14 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
                     count_sql.push_str(&replaced_where);
                 }
-                sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(executor).await
+                sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(conn).await
             }
 
-
+            #instrument_attr_stream
+            #[inline]
             pub async fn stream<E>(
                 &'q mut self,
-                executor: E,
+                conn: E,
             ) -> futures::stream::BoxStream<'q, core::result::Result<#struct_name, sqlx::Error>>
             where
                 E: sqlx::Executor<'q, Database = #database_type> + 'q,
@@ -275,7 +332,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     self.stream_sql.push_str(" ORDER BY ");
                     self.stream_sql.push_str(&self.order_by_clauses.join(", "));
                 }
-                sqlx::query_as_with(&self.stream_sql, *self.where_args.0.clone()).fetch(executor)
+                sqlx::query_as_with(&self.stream_sql, *self.where_args.0.clone()).fetch(conn)
             }
 
         }
@@ -974,6 +1031,7 @@ mod tests {
 /// Implement update builder macro
 pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -> TokenStream {
     let struct_name = &input.ident;
+    let struct_name_str = struct_name.to_string();
     let set_builder_name = quote::format_ident!("{}UpdateSetBuilder", struct_name);
     let where_builder_name = quote::format_ident!("{}UpdateWhereBuilder", struct_name);
     let args_struct_name = quote::format_ident!("{}UpdateBuilderArgs", struct_name);
@@ -1079,6 +1137,17 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
     // Generate placeholder replacement function based on database type
     let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
 
+    // Generate instrument attributes for update builder methods
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro
+    let instrument_name_update_execute = format!("{}::builder_update_execute", &struct_name_str);
+    let instrument_attr_update_execute = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_update_execute, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         /// UpdateBuilderArgs for parameter binding
         #[derive(Clone)]
@@ -1180,12 +1249,14 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             }
 
             /// Execute update query
-            pub async fn execute<'c, E>(self, executor: E) -> Result<u64, sqlx::Error>
+            #instrument_attr_update_execute
+            #[inline]
+            pub async fn execute<'c, E>(self, conn: E) -> Result<u64, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
                 let sql = self.build_sql();
-                let result = sqlx::query_with(&sql, *self.args.0).execute(executor).await?;
+                let result = sqlx::query_with(&sql, *self.args.0).execute(conn).await?;
                 Ok(result.rows_affected())
             }
         }
@@ -1253,12 +1324,14 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             }
 
             /// Execute update query
-            pub async fn execute<'c, E>(self, executor: E) -> Result<u64, sqlx::Error>
+            #instrument_attr_update_execute
+            #[inline]
+            pub async fn execute<'c, E>(self, conn: E) -> Result<u64, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
                 let sql = self.build_sql();
-                let result = sqlx::query_with(&sql, *self.args.0).execute(executor).await?;
+                let result = sqlx::query_with(&sql, *self.args.0).execute(conn).await?;
                 Ok(result.rows_affected())
             }
         }
@@ -1697,6 +1770,7 @@ fn generate_update_basic_methods(field_name: &Ident, column_name: &str, database
 /// Implement delete builder macro
 pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -> TokenStream {
     let struct_name = &input.ident;
+    let struct_name_str = struct_name.to_string();
     let builder_name = quote::format_ident!("{}DeleteBuilder", struct_name);
     let args_struct_name = quote::format_ident!("{}DeleteBuilderArgs", struct_name);
     let table_name = &config.table_name;
@@ -1727,6 +1801,17 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
     // Generate placeholder replacement function based on database type
     let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
+
+    // Generate instrument attributes for delete builder methods
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro
+    let instrument_name_delete_execute = format!("{}::builder_delete_execute", &struct_name_str);
+    let instrument_attr_delete_execute = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_delete_execute, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
         /// DeleteBuilderArgs for parameter binding
@@ -1805,14 +1890,16 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             }
 
             /// Execute delete query
-            pub async fn execute<'c, E>(self, executor: E) -> Result<u64, sqlx::Error>
+            #instrument_attr_delete_execute
+            #[inline]
+            pub async fn execute<'c, E>(self, conn: E) -> Result<u64, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
                 let sql = self.build_sql();
                 let where_args = self.where_args;
 
-                let result = sqlx::query_with(&sql, *where_args.0).execute(executor).await?;
+                let result = sqlx::query_with(&sql, *where_args.0).execute(conn).await?;
                 Ok(result.rows_affected())
             }
         }

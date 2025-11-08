@@ -254,50 +254,10 @@ pub fn get_debug_slow_from_table_scope(ast: &DeriveInput) -> Option<i32> {
 }
 
 pub fn get_instrument_config(ast: &DeriveInput) -> InstrumentConfig {
-    let instruments : Vec<InstrumentConfig> = ast
-        .attrs
-        .iter()
-        .filter_map(|attr| {
-            if let Ok(meta) = attr.parse_meta() {
-                match meta {
-                    Meta::NameValue(MetaNameValue { path, lit, .. }) if path.is_ident("instrument") => {
-                        match lit {
-                            // instrument = true
-                            Lit::Bool(lit_bool) => {
-                                if lit_bool.value {
-                                    Some(InstrumentConfig::Enabled)
-                                } else {
-                                    Some(InstrumentConfig::None)
-                                }
-                            }
-                            // instrument = "skip_all" hoặc instrument = "skip(self, ...)"
-                            Lit::Str(lit_str) => {
-                                let value = lit_str.value();
-                                if value == "skip_all" {
-                                    Some(InstrumentConfig::SkipAll)
-                                } else if value.starts_with("skip(") && value.ends_with(")") {
-                                    Some(InstrumentConfig::Skip(value))
-                                } else {
-                                    panic!("Invalid instrument attribute value: '{}'. Expected 'skip_all' or 'skip(...)'", value);
-                                }
-                            }
-                            _ => {
-                                panic!("Invalid instrument attribute. Expected boolean or string value.");
-                            }
-                        }
-                    }
-                    _ => None
-                }
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    match instruments.len() {
-        0 => InstrumentConfig::None,
-        1 => instruments.into_iter().next().unwrap(),
-        _ => panic!("More than one instrument attribute was found"),
-    }
+    // Global instrument attribute is no longer used
+    // When feature "tracing" is enabled, all functions automatically get skip_all
+    // Only tp_* attributes can override the default behavior
+    InstrumentConfig::None
 }
 
 fn check_fields<'a>(fields_from_attr: &Vec<&'a str>, all_fields: Vec<&'a Field>) -> Vec<Field> {
@@ -445,7 +405,13 @@ pub(super) fn gen_instrument_attr(config: &InstrumentConfig, struct_name: &str, 
     #[cfg(feature = "tracing")]
     {
         match config {
-            InstrumentConfig::None => quote! {},
+            // When tracing is enabled but no explicit config, default to skip_all
+            InstrumentConfig::None => {
+                let instrument_name = format!("{}::{}", struct_name, fn_name);
+                quote! {
+                    #[tracing::instrument(name = #instrument_name, skip_all)]
+                }
+            },
             InstrumentConfig::Enabled => {
                 let instrument_name = format!("{}::{}", struct_name, fn_name);
                 quote! {

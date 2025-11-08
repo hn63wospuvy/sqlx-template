@@ -2,6 +2,7 @@
 members = [
     ".", "examples/postgres", "examples/sqlite", "examples/mysql"
 ]
+exclude = ["examples/sqlite-tracing", "examples/test-simple"]
 
 
 [workspace.package]
@@ -46,6 +47,7 @@ tokio = { version = "1.20.0", features = [ "rt-multi-thread", "macros" ] }
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres", "macros", "uuid", "chrono"] }
 futures-util = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"  # Required when tracing feature is enabled
 
 
 

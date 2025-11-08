@@ -121,7 +121,19 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
     let debug_slow = get_debug_slow(args.get(1))?; 
     let db = db.unwrap_or_else(|| super::get_database_from_input_fn(&input));
     // Extract the function name and arguments 
-    let fn_name = &input.sig.ident; 
+    let fn_name = &input.sig.ident;
+    
+    // Generate instrument attribute for tracing
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro
+    let fn_name_str = fn_name.to_string();
+    let instrument_attr = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #fn_name_str, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
     let fn_args = &input.sig.inputs; 
     let mut map_args = HashMap::new(); 
     let mut param_names: Vec<String> = fn_args.iter()
@@ -167,14 +179,16 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
     let database = super::get_database_type(db); 
     
     let final_gen = if fn_args.is_empty() {
-        quote! { 
+        quote! {
+            #instrument_attr
             pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(conn: E) -> Result<(), sqlx::Error> { 
                 #(#queries_gen)* 
                 Ok(()) 
             } 
         }
     } else {
-        quote! { 
+        quote! {
+            #instrument_attr
             pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args, conn: E) -> Result<(), sqlx::Error> { 
                 #(#queries_gen)* 
                 Ok(()) 
@@ -192,6 +206,18 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
 
     // Extract the function name and arguments
     let fn_name = &input.sig.ident;
+    
+    // Generate instrument attribute for tracing
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro
+    let fn_name_str = fn_name.to_string();
+    let instrument_attr = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #fn_name_str, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
     let fn_args = &input.sig.inputs;
     let fn_args_with_comma = if fn_args.is_empty() {
         quote! {}
@@ -396,6 +422,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             match data_type {
                 Some(DataType::Stream) => {
                     quote! {
+                        #instrument_attr
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
@@ -408,6 +435,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                 }
                 _ => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
@@ -425,6 +453,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             match data_type {
                 Some(DataType::Stream) => {
                     quote! {
+                        #instrument_attr
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_scalar(sql)#(#binds)*;
@@ -437,6 +466,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                 }
                 _ => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_scalar(sql)#(#binds)*;
@@ -452,6 +482,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
         },
         QueryType::RowAfftected => {
             quote! {
+                #instrument_attr
                 pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                     let sql = #sql;
                     let query = sqlx::query(sql)#(#binds)*;
@@ -464,6 +495,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
         },
         QueryType::Void => {
             quote! {
+                #instrument_attr
                 pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                     let sql = #sql;
                     let query = sqlx::query(sql)#(#binds)*;
@@ -478,6 +510,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
         QueryType::Page => {
             let count_query = parser::convert_to_count_query(&sql, dialect.as_ref()).unwrap();
             let count_query_fn = quote! {
+                #instrument_attr
                 pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> core::result::Result<i64, sqlx::Error> {
                     let sql = #count_query;
                     let query = sqlx::query_scalar(sql)#(#binds)*;
@@ -510,6 +543,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                 
             });
             let data_query_fn = quote! {
+                #instrument_attr
                 pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma offset: i64, limit: i32, conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
                     let sql = #sql;
                     let query = sqlx::query_as::<_, #return_type>(sql)#(#page_binds)*;
@@ -538,6 +572,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             
 
             quote! {
+                #instrument_attr
                 pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args_with_comma page: impl Into<(i64, i32, bool)>, conn: E) -> #output {
                     #data_query_fn
 

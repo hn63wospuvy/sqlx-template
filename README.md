@@ -428,7 +428,7 @@ Custom conditions allow you to define complex SQL expressions that go beyond sim
 
 ## Tracing Integration
 
-The `instrument` attribute allows automatic addition of `#[tracing::instrument]` attributes to generated functions for observability and debugging.
+When the `tracing` feature is enabled, all generated functions automatically get `#[tracing::instrument]` attributes with `skip_all` for observability and debugging. You can override this behavior on individual functions using the `instrument` attribute on `tp_*` macros.
 
 ### Enable Tracing
 
@@ -440,55 +440,62 @@ sqlx-template = { version = "0.1", features = ["tracing"] }
 tracing = "0.1"
 ```
 
-### Usage Examples
+### Automatic Instrumentation
+
+When the `tracing` feature is enabled, all generated functions automatically include `#[instrument(name = "...", skip_all)]`:
 
 ```rust
-// Global instrument for all generated functions
 #[derive(SqliteTemplate, FromRow)]
 #[table("users")]
-#[instrument = true]  // All functions traced
 #[tp_select_all(by = "name")]
 #[tp_insert]
+#[tp_select_builder]
+#[tp_update_builder]
 pub struct User {
     pub id: i32,
     pub name: String,
 }
 
-// Global with skip_all (skip parameters from trace)
-#[derive(SqliteTemplate, FromRow)]
-#[table("logs")]
-#[instrument = "skip_all"]
-#[tp_select_all]
-pub struct Log {
-    pub id: i32,
-    pub message: String,
-}
+// All generated functions automatically get:
+// #[tracing::instrument(name = "User::find_all_by_name", skip_all)]
+// #[tracing::instrument(name = "User::insert", skip_all)]
+// #[tracing::instrument(name = "User::builder_find_all", skip_all)]
+// etc.
+```
 
-// Function-specific override
+### Function-Level Override
+
+You can override the default `skip_all` behavior on individual functions:
+
+```rust
 #[derive(SqliteTemplate, FromRow)]
 #[table("sessions")]
-#[instrument = true]  // Global default
-#[tp_select_one(by = "token", instrument = "skip(conn)")]  // Skip only conn
-#[tp_update(by = "id", on = "last_activity", instrument = "skip_all")]
+#[tp_select_one(by = "token", instrument = "skip(conn)")]  // Skip only conn parameter
+#[tp_update(by = "id", on = "last_activity", instrument = true)]  // Don't skip any parameters
 pub struct Session {
     pub id: i32,
     pub token: String,
 }
 ```
 
-**Instrument Name Format**: `{StructName}::{function_name}`
-- Examples: `User::find_all_by_name`, `Session::find_one_by_token`
+**Instrument Name Format**: `{StructName}::{function_name}` or `{function_name}` for raw query macros
+- Template functions: `User::find_all_by_name`, `Session::find_one_by_token`
+- Builder functions: `User::builder_find_all`, `User::builder_update_execute`
+- Raw query functions: `get_user_stats`, `update_user_status`
 
-**Attribute Values**:
-- Global level: `true` or `"skip_all"`
-- Function level: `true`, `"skip_all"`, or `"skip(param1, param2, ...)"`
+**Override Attribute Values**:
+- `instrument = true`: Include all parameters in trace
+- `instrument = "skip_all"`: Skip all parameters (same as default)
+- `instrument = "skip(param1, param2)"`: Skip specific parameters
+
+**Parameter Name**: All generated functions use `conn` as the parameter name for the database executor.
 
 See [Tracing Documentation](docs/tracing_instrument.md) for detailed examples.
 
 ## Features
 
 
-- `tracing`: Use the `tracing::debug!` macro for logging (requires adding the `tracing` crate to `Cargo.toml`).
+- `tracing`: Use the `tracing::debug!` macro for logging (requires adding the `tracing` crate to `Cargo.toml`). When enabled, all generated functions automatically get `#[instrument(skip_all)]` attributes.
 - `log`: Use the `log::debug!` macro for logging (requires adding the `log` crate to `Cargo.toml`).
 
 ## Notes

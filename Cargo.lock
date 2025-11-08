@@ -2019,6 +2019,7 @@ dependencies = [
  "structopt",
  "syn 1.0.109",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
