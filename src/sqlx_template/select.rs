@@ -505,7 +505,12 @@ fn build_query(
             super::check_valid_single_sql(&sql, db);
             let count_sql = format!("SELECT COUNT(1) FROM {table_name}");
             let fn_name_str = fn_name.to_string();
-            let instrument_attr = super::gen_instrument_attr(instrument_config, struct_name_str, &fn_name_str);
+            // Don't add instrument attribute for stream functions (they are not async)
+            let instrument_attr = if qtype == SelectType::Stream {
+                quote! {}
+            } else {
+                super::gen_instrument_attr(instrument_config, struct_name_str, &fn_name_str)
+            };
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
@@ -601,7 +606,6 @@ fn build_query(
                 }
                 SelectType::Stream => {
                     quote! {
-                        #instrument_attr
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>( conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#struct_name, sqlx::Error>> {
                             let sql = #sql;
                             #dbg_before
@@ -900,7 +904,12 @@ fn build_query(
                 quote! {#(#fn_args),* ,}
             };
             let fn_name_str = fn_name.to_string();
-            let instrument_attr = super::gen_instrument_attr(instrument_config, struct_name_str, &fn_name_str);
+            // Don't add instrument attribute for stream functions (they are not async)
+            let instrument_attr = if qtype == SelectType::Stream {
+                quote! {}
+            } else {
+                super::gen_instrument_attr(instrument_config, struct_name_str, &fn_name_str)
+            };
             let generated = match qtype {
                 SelectType::All => {
                     quote! {
@@ -1007,7 +1016,6 @@ fn build_query(
                 }
                 SelectType::Stream => {
                     quote! {
-                        #instrument_attr
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> futures::stream::BoxStream<'c, Result<#struct_name, sqlx::Error>> {
                             let sql = #sql;
                             #dbg_before

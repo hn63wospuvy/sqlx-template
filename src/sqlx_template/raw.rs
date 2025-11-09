@@ -433,7 +433,6 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             match data_type {
                 Some(DataType::Stream) => {
                     quote! {
-                        #instrument_attr
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
@@ -464,7 +463,6 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             match data_type {
                 Some(DataType::Stream) => {
                     quote! {
-                        #instrument_attr
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_scalar(sql)#(#binds)*;
