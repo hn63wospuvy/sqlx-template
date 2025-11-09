@@ -405,23 +405,23 @@ pub(super) fn gen_instrument_attr(config: &InstrumentConfig, struct_name: &str, 
     #[cfg(feature = "tracing")]
     {
         match config {
-            // When tracing is enabled but no explicit config, default to skip_all
+            // When tracing is enabled but no explicit config, default to skip_all with err
             InstrumentConfig::None => {
                 let instrument_name = format!("{}::{}", struct_name, fn_name);
                 quote! {
-                    #[tracing::instrument(name = #instrument_name, skip_all)]
+                    #[tracing::instrument(name = #instrument_name, skip_all, err)]
                 }
             },
             InstrumentConfig::Enabled => {
                 let instrument_name = format!("{}::{}", struct_name, fn_name);
                 quote! {
-                    #[tracing::instrument(name = #instrument_name)]
+                    #[tracing::instrument(name = #instrument_name, err)]
                 }
             },
             InstrumentConfig::SkipAll => {
                 let instrument_name = format!("{}::{}", struct_name, fn_name);
                 quote! {
-                    #[tracing::instrument(name = #instrument_name, skip_all)]
+                    #[tracing::instrument(name = #instrument_name, skip_all, err)]
                 }
             },
             InstrumentConfig::Skip(skip_args) => {
@@ -434,7 +434,7 @@ pub(super) fn gen_instrument_attr(config: &InstrumentConfig, struct_name: &str, 
                     .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
                     .collect::<Vec<_>>();
                 quote! {
-                    #[tracing::instrument(name = #instrument_name, skip(#(#skip_params),*))]
+                    #[tracing::instrument(name = #instrument_name, skip(#(#skip_params),*), err)]
                 }
             }
         }
