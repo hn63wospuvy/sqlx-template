@@ -973,6 +973,19 @@ fn build_query(
                         })
                         .collect::<Vec<_>>();
                     let fn_args_name_clone = fn_args_name.clone();
+                    
+                    // Generate function call arguments - handle empty by_fields case
+                    let data_query_call = if fn_args_name.is_empty() {
+                        quote! { data_query(offset, limit, conn).await? }
+                    } else {
+                        quote! { data_query(#(#fn_args_name),*, offset, limit, conn).await? }
+                    };
+                    let count_query_call = if fn_args_name.is_empty() {
+                        quote! { count_query(conn).await? }
+                    } else {
+                        quote! { count_query(#(#fn_args_name),*, conn).await? }
+                    };
+                    
                     quote! {
                         #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy + 'c>(#args_signature page: impl Into<(i64, i32, bool)>, conn: E) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error> {
@@ -1000,12 +1013,12 @@ fn build_query(
                             let offset = page.0;
                             let limit = page.1;
                             let count = page.2;
-                            let data = data_query(#(#fn_args_name),*, offset, limit, conn).await?;
+                            let data = #data_query_call;
                             let count = if count {
                                 if data.is_empty() && offset == 0 {
                                     Some(0)
                                 } else {
-                                    Some(count_query(#(#fn_args_name),*,conn).await?)
+                                    Some(#count_query_call)
                                 }
                             } else {
                                 None
