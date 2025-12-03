@@ -362,7 +362,7 @@ fn build_default_find_page_all_query(
                 Ok(query_result?)
             }
             pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database>>( conn: E) -> Result<i64, sqlx::Error> {
-                let sql = #sql;
+                let sql = #count_sql;
                 #dbg_before
                 let count = sqlx::query_scalar(sql)
                     .fetch_one(conn)
