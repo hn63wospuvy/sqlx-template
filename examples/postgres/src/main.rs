@@ -142,7 +142,7 @@ async fn main() {
     tx.commit().await.unwrap();
 
     
-    let mut user_updated_stream = User::update_user_returning_stream(&user.id, &user, &db).await;
+    let mut user_updated_stream = User::update_user_returning_stream(&user.id, &user, &db);
     while let Some(Ok(o)) = user_updated_stream.next().await {
         println!("Updated user: {o:#?}");
     }

@@ -482,8 +482,8 @@ pub fn derive_update(
                                 #dbg_after
                                 Ok(query_result?)
                             }
-                            #instrument_attr_return_stream
-                            pub async fn #fn_name_return_stream<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature re: &'c #struct_name, conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#return_type, sqlx::Error>> {
+
+                            pub fn #fn_name_return_stream<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature re: &'c #struct_name, conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#return_type, sqlx::Error>> {
                                 let sql = #sql_return;
                                 #dbg_before
                                 let query_result = sqlx::#query_func::<_, #return_type>(sql)

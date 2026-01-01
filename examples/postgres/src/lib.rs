@@ -18,7 +18,8 @@ pub struct Page<T> {
 #[tp_delete(where = "active = :active and 2 * id > :min_id$i32", returning = true)]
 // #[tp_select_one(by = "id, sender", order = "id desc", where = "active = :active", fn_name = "get_by_sender_active")]
 #[tp_update(by = "id", where = "groups = :sender", returning = true)]
-#[tp_update(by = "id", on = "content", where = "access = :sender", returning = "id, sender")]
+#[tp_update(where = "groups = :sender", returning = true)]
+#[tp_update(by = "id", on = "content", where = "access = :sender", fn_name = "update_content_return", returning = "id, sender")]
 // #[tp_update(by = "id", on = "receiver", where = "sender = :sender")]
 // #[tp_upsert(by = "id", on = "sender, content", fn_name = "test1")]
 #[tp_select_page(order = "created_at desc")]
@@ -66,3 +67,7 @@ pub async fn get_active_chats(active: bool) -> Page<Chat> {}
 
 // Include test module
 pub mod test_count_query;
+
+async fn test() {
+    // let r = Chat::update_content_return(todo!(), todo!(), todo!(), todo!()).await;
+}
