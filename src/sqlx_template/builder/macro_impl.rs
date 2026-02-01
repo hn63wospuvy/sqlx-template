@@ -892,8 +892,8 @@ fn is_string_type(type_str: &str) -> bool {
     cleaned.starts_with("Option<") && cleaned.ends_with("::String>") || // Option<std::string::String>
 
     // Check for Vec<String> patterns (if needed)
-    cleaned == "Vec<String>" ||
-    cleaned.starts_with("Vec<") && cleaned.ends_with("::String>") || // Vec<std::string::String>
+    // cleaned == "Vec<String>" ||
+    // cleaned.starts_with("Vec<") && cleaned.ends_with("::String>") || // Vec<std::string::String>
 
     // Check for Box<str> patterns
     cleaned == "Box<str>" ||
