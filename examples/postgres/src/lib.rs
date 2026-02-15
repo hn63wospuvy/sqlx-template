@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use sqlx::types::Json;
 use sqlx_template::*;
 use sqlx::FromRow;
 use sqlx::types::chrono::DateTime;
@@ -23,7 +26,11 @@ pub struct Page<T> {
 // #[tp_update(by = "id", on = "receiver", where = "sender = :sender")]
 // #[tp_upsert(by = "id", on = "sender, content", fn_name = "test1")]
 #[tp_select_page(order = "created_at desc")]
+#[tp_select_page(order = "user desc")]
 #[tp_select_page(where = "id IS NOT NULL", order = "created_at desc", fn_name = "test1")]
+#[tp_select_builder(
+    with_user_email = "user->>'email' ILIKE :user_email$String",
+)]
 pub struct Chat {
     pub id: i32,
     pub sender: i32,
@@ -31,6 +38,7 @@ pub struct Chat {
     pub content: String,
     pub groups: String,
     pub access: String,
+    pub user: Json<HashMap<String, String>>,
     pub active: bool,
     pub created_by: Option<String>,
     pub created_at: DateTime<Utc>,

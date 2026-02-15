@@ -283,13 +283,17 @@ impl BuilderConfig {
 
         // Validate columns exist in struct fields
         for col in &par_res.columns {
-            let normalized_col = super::check_column_name(col.clone(), db);
-            if !field_names.contains(&normalized_col) {
+            // Validate against the original (unquoted) column name,
+            // since field_names contains unquoted Rust field names.
+            // check_column_name may add quotes for reserved words (e.g. "user" -> "\"user\""),
+            // but that should not affect field existence validation.
+            if !field_names.contains(col) {
                 return Err(syn::Error::new(
                     proc_macro2::Span::call_site(),
                     format!("Column '{}' in custom condition not found in struct fields", col)
                 ));
             }
+            let normalized_col = super::check_column_name(col.clone(), db);
             columns.push(normalized_col);
         }
 
