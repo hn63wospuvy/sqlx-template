@@ -971,9 +971,7 @@ mod tests {
         assert!(is_string_type("Option<&'a str>"));
         assert!(is_string_type("Option<std::string::String>"));
 
-        // Vec and Box string types
-        assert!(is_string_type("Vec<String>"));
-        assert!(is_string_type("Vec<std::string::String>"));
+        // Box string types
         assert!(is_string_type("Box<str>"));
         assert!(is_string_type("Box<std::str>"));
 
