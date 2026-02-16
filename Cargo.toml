@@ -6,7 +6,7 @@ exclude = ["examples/sqlite-tracing"]
 
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 license = "MIT OR Apache-2.0"
 edition = "2021"
 repository = "https://github.com/hn63wospuvy/sqlx-template"
