@@ -20,14 +20,16 @@ pub fn derive_update(
     scope: super::Scope,
     db: Option<Database>,
 ) -> syn::Result<TokenStream> {
-    let struct_name = &ast.ident;
+    let struct_name_ident = &ast.ident;
+    let struct_name_str = struct_name_ident.to_string();
     let struct_name = match for_path {
         Some(path) => quote! {#path},
-        None => quote! {#struct_name},
+        None => quote! {#struct_name_ident},
     };
     let table_name = get_table_name(&ast);
     let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
+    let instrument_config = super::get_instrument_config(&ast);
 
     let all_fields = if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
@@ -222,6 +224,12 @@ pub fn derive_update(
                         Ident::new(&fn_name_return, proc_macro2::Span::call_site());
                     let fn_name_return_stream =
                         Ident::new(&format!("{fn_name_return}_stream"), proc_macro2::Span::call_site());
+                    let fn_name_str = fn_name.to_string();
+                    let fn_name_return_str = fn_name_return.to_string();
+                    let fn_name_return_stream_str = fn_name_return_stream.to_string();
+                    let instrument_attr = super::gen_instrument_attr(&instrument_config, &struct_name_str, &fn_name_str);
+                    let instrument_attr_return = super::gen_instrument_attr(&instrument_config, &struct_name_str, &fn_name_return_str);
+                    let instrument_attr_return_stream = super::gen_instrument_attr(&instrument_config, &struct_name_str, &fn_name_return_stream_str);
                     let mut fn_args = by_fields
                         .iter()
                         .map(|field| {
@@ -463,6 +471,7 @@ pub fn derive_update(
                         );
                         super::check_valid_single_sql(&sql_return, db);
                         quote! {
+                            #instrument_attr_return
                             pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature re: &'c #struct_name, conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
                                 let sql = #sql_return;
                                 #dbg_before
@@ -473,7 +482,8 @@ pub fn derive_update(
                                 #dbg_after
                                 Ok(query_result?)
                             }
-                            pub async fn #fn_name_return_stream<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature re: &'c #struct_name, conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#return_type, sqlx::Error>> {
+
+                            pub fn #fn_name_return_stream<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature re: &'c #struct_name, conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#return_type, sqlx::Error>> {
                                 let sql = #sql_return;
                                 #dbg_before
                                 let query_result = sqlx::#query_func::<_, #return_type>(sql)
@@ -489,6 +499,7 @@ pub fn derive_update(
 
                     } else {
                         quote! {
+                            #instrument_attr
                             pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature re: &#struct_name, conn: E) -> core::result::Result<u64, sqlx::Error> {
                                 let sql = #sql;
                                 #dbg_before
@@ -537,6 +548,12 @@ pub fn derive_update(
                         Ident::new(&fn_name_return, proc_macro2::Span::call_site());
                     let fn_name_return_stream =
                         Ident::new(&format!("{fn_name_return}_stream"), proc_macro2::Span::call_site());
+                    let fn_name_str = fn_name.to_string();
+                    let fn_name_return_str = fn_name_return.to_string();
+                    let fn_name_return_stream_str = fn_name_return_stream.to_string();
+                    let instrument_attr = super::gen_instrument_attr(&instrument_config, &struct_name_str, &fn_name_str);
+                    let instrument_attr_return = super::gen_instrument_attr(&instrument_config, &struct_name_str, &fn_name_return_str);
+                    let instrument_attr_return_stream = super::gen_instrument_attr(&instrument_config, &struct_name_str, &fn_name_return_stream_str);
                     let mut fn_args = by_fields
                         .iter()
                         .map(|field| {
@@ -780,6 +797,7 @@ pub fn derive_update(
                         );
                         super::check_valid_single_sql(&sql_return, db);
                         quote! {
+                            #instrument_attr_return
                             pub async fn #fn_name_return<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
                                 let sql = #sql_return;
                                 #dbg_before
@@ -790,7 +808,7 @@ pub fn derive_update(
                                 #dbg_after
                                 Ok(query_result?)
                             }
-                            pub async fn #fn_name_return_stream<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#return_type, sqlx::Error>> {
+                            pub fn #fn_name_return_stream<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#args_signature conn: E) -> futures::stream::BoxStream<'c, core::result::Result<#return_type, sqlx::Error>> {
                                 let sql = #sql_return;
                                 #dbg_before
                                 let query_result = sqlx::#query_func::<_, #return_type>(sql)
@@ -806,6 +824,7 @@ pub fn derive_update(
 
                     } else {
                         quote! {
+                            #instrument_attr
                             pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#args_signature conn: E) -> core::result::Result<u64, sqlx::Error> {
                                 let sql = #sql;
                                 #dbg_before

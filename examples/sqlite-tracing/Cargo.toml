@@ -1,0 +1,30 @@
+[workspace]
+
+[package]
+name = "sqlite-tracing"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+repository = "https://github.com/hn63wospuvy/sqlx-template"
+keywords = ["database", "async", "postgres", "mysql", "sqlite"]
+categories = ["database", "asynchronous"]
+authors = ["hg <hn63wospuvy@gmail.com>"]
+
+[[bin]]
+name = "sqlite-tracing"
+path = "src/main.rs"
+
+# [[bin]]
+# name = "builder_example"
+# path = "src/builder_example.rs"
+
+[dependencies]
+anyhow = "1.0"
+futures = "0.3"
+sqlx-template = { path = "../../", features = ["tracing"] }
+structopt = "0.3"
+tokio = { version = "1.20.0", features = [ "rt-multi-thread", "macros" ] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "postgres", "macros", "uuid", "chrono"] }
+futures-util = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"

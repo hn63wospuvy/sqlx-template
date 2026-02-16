@@ -561,3 +561,72 @@ pub fn query_user_org(name: &str, org: i32) -> Stream<(i32, String)> {} // Strea
 ")]
 #[db("mysql")]
 pub fn query_user_org1(name: &str, org: i32) -> Stream<(i32, String)> {} // Stream does not need async because it return a future. `:org` does not need to appear in the query
+
+
+// ============================================
+// INSTRUMENT ATTRIBUTE EXAMPLES FOR MYSQL
+// ============================================
+
+/// Example 1: Global instrument - traces all generated functions
+/// Instrument name will be "Product::{function_name}"
+#[derive(MysqlTemplate, FromRow, Debug, Clone)]
+#[table("products")]
+#[instrument = true]  // Global: traces all functions with full parameters
+#[tp_select_all(by = "category")]
+#[tp_select_one(by = "id")]
+#[tp_insert]
+#[tp_update(by = "id", on = "price")]
+pub struct Product {
+    #[auto]
+    pub id: i32,
+    pub name: String,
+    pub category: String,
+    pub price: f64,
+}
+
+/// Example 2: Global skip_all - useful for high-volume operations
+/// Reduces tracing overhead by skipping all function parameters
+#[derive(MysqlTemplate, FromRow, Debug, Clone)]
+#[table("events")]
+#[instrument = "skip_all"]  // Skip all parameters in traces
+#[tp_select_all(by = "user_id")]
+#[tp_select_count(by = "event_type")]
+#[tp_insert]
+pub struct Event {
+    #[auto]
+    pub id: i32,
+    pub user_id: i32,
+    pub event_type: String,
+    pub payload: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Example 3: Function-specific instrument overrides
+/// Mix global settings with per-function overrides
+#[derive(MysqlTemplate, FromRow, Debug, Clone)]
+#[table("sessions")]
+#[tp_select_one(by = "token", instrument = "skip(conn)")]  // Override: skip conn param
+#[tp_update(by = "id", on = "last_activity", instrument = "skip_all")]  // Override: skip all
+#[tp_delete(by = "token", instrument = true)]  // Explicit: trace all params
+pub struct Session {
+    #[auto]
+    pub id: i32,
+    pub token: String,
+    pub user_id: i32,
+    pub last_activity: DateTime<Utc>,
+}
+
+/// Example 4: Builder pattern with instrument
+/// Demonstrates instrument on builder methods
+#[derive(MysqlTemplate, FromRow, Debug, Clone)]
+#[table("metrics")]
+#[instrument = "skip_all"]  // Global skip
+#[tp_select_builder(
+    with_high_value = "value > :threshold$f64"
+)]
+#[tp_select_one(by = "name", instrument = true)]  // Override: trace this specific query
+pub struct Metric {
+    pub name: String,
+    pub value: f64,
+    pub timestamp: DateTime<Utc>,
+}

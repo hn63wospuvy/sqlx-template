@@ -35,6 +35,7 @@ fn generate_placeholder_replacement_fn(database: Database) -> TokenStream {
 /// Generate select builder implementation cho struct
 pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -> TokenStream {
     let struct_name = &input.ident;
+    let struct_name_str = struct_name.to_string();
     let builder_name = quote::format_ident!("{}SelectBuilder", struct_name);
     let args_struct_name = quote::format_ident!("{}QueryBuilderArgs", struct_name);
     let table_name = &config.table_name;
@@ -79,6 +80,53 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
     // Generate placeholder replacement function based on database type
     let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
+
+    // Generate instrument attributes for tracing
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro to check proc macro's feature, not user's feature
+    let instrument_name_find_one = format!("{}::builder_find_one", &struct_name_str);
+    let instrument_attr_find_one = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_find_one, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
+    let instrument_name_find_all = format!("{}::builder_find_all", &struct_name_str);
+    let instrument_attr_find_all = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_find_all, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
+    let instrument_name_find_page = format!("{}::builder_find_page", &struct_name_str);
+    let instrument_attr_find_page = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_find_page, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
+    let instrument_name_count = format!("{}::builder_count", &struct_name_str);
+    let instrument_attr_count = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_count, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+    
+    let instrument_name_stream = format!("{}::builder_stream", &struct_name_str);
+    let instrument_attr_stream = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_stream, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
 
     // Build builder with simple parameter storage and manual binding
     quote! {
@@ -175,7 +223,9 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
             /// Execute query và return single result
             /// Note: This uses parameterized queries with proper parameter binding
-            pub async fn find_one<'c, E>(self, executor: E) -> Result<Option<#struct_name>, sqlx::Error>
+            #instrument_attr_find_one
+            #[inline]
+            pub async fn find_one<'c, E>(self, conn: E) -> Result<Option<#struct_name>, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
@@ -183,12 +233,14 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 let where_args = self.where_args;
 
                 // Manually bind parameters
-                sqlx::query_as_with(&sql, *where_args.0).fetch_optional(executor).await
+                sqlx::query_as_with(&sql, *where_args.0).fetch_optional(conn).await
             }
 
             /// Execute query và return all results
             /// Note: This uses parameterized queries with proper parameter binding
-            pub async fn find_all<'c, E>(self, executor: E) -> Result<Vec<#struct_name>, sqlx::Error>
+            #instrument_attr_find_all
+            #[inline]
+            pub async fn find_all<'c, E>(self, conn: E) -> Result<Vec<#struct_name>, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
@@ -197,14 +249,16 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
                 // Manually bind parameters
                 sqlx::query_as_with(&sql, *where_args.0)
-                    .fetch_all(executor)
+                    .fetch_all(conn)
                     .await
             }
 
+            #instrument_attr_find_page
+            #[inline]
             pub async fn find_page<'c, E>(
                 self,
                 page: impl Into<(i64, i32, bool)>,
-                executor: E,
+                conn: E,
             ) -> Result<(Vec<#struct_name>, Option<i64>), sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type> +'c + Copy,
@@ -216,7 +270,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
 
                 let res = if count {
-                    let data = sqlx::query_as_with(&sql, *self.where_args.0.clone()).fetch_all(executor).await?;
+                    let data = sqlx::query_as_with(&sql, *self.where_args.0.clone()).fetch_all(conn).await?;
                     if data.is_empty() && offset == 0 {
                         (data, Some(0))
                     } else {
@@ -228,19 +282,21 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                             let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
                             count_sql.push_str(&replaced_where);
                         }
-                        let count = sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(executor).await?;
+                        let count = sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(conn).await?;
                         (data, Some(count))
                     }
                 } else {
-                    let data = sqlx::query_as_with(&sql, *self.where_args.0).fetch_all(executor).await?;
+                    let data = sqlx::query_as_with(&sql, *self.where_args.0).fetch_all(conn).await?;
                     (data, None)
                 };
                 Ok(res)
             }
 
+            #instrument_attr_count
+            #[inline]
             pub async fn count<'c, E>(
                 self,
-                executor: E,
+                conn: E,
             ) -> Result<i64, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
@@ -252,13 +308,14 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     let replaced_where = Self::replace_placeholders(&where_clause, self.where_args.len());
                     count_sql.push_str(&replaced_where);
                 }
-                sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(executor).await
+                sqlx::query_scalar_with(&count_sql, *self.where_args.0).fetch_one(conn).await
             }
 
-
+            #instrument_attr_stream
+            #[inline]
             pub async fn stream<E>(
                 &'q mut self,
-                executor: E,
+                conn: E,
             ) -> futures::stream::BoxStream<'q, core::result::Result<#struct_name, sqlx::Error>>
             where
                 E: sqlx::Executor<'q, Database = #database_type> + 'q,
@@ -275,7 +332,7 @@ pub fn impl_select_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                     self.stream_sql.push_str(" ORDER BY ");
                     self.stream_sql.push_str(&self.order_by_clauses.join(", "));
                 }
-                sqlx::query_as_with(&self.stream_sql, *self.where_args.0.clone()).fetch(executor)
+                sqlx::query_as_with(&self.stream_sql, *self.where_args.0.clone()).fetch(conn)
             }
 
         }
@@ -835,8 +892,8 @@ fn is_string_type(type_str: &str) -> bool {
     cleaned.starts_with("Option<") && cleaned.ends_with("::String>") || // Option<std::string::String>
 
     // Check for Vec<String> patterns (if needed)
-    cleaned == "Vec<String>" ||
-    cleaned.starts_with("Vec<") && cleaned.ends_with("::String>") || // Vec<std::string::String>
+    // cleaned == "Vec<String>" ||
+    // cleaned.starts_with("Vec<") && cleaned.ends_with("::String>") || // Vec<std::string::String>
 
     // Check for Box<str> patterns
     cleaned == "Box<str>" ||
@@ -974,7 +1031,9 @@ mod tests {
 /// Implement update builder macro
 pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -> TokenStream {
     let struct_name = &input.ident;
-    let builder_name = quote::format_ident!("{}UpdateBuilder", struct_name);
+    let struct_name_str = struct_name.to_string();
+    let set_builder_name = quote::format_ident!("{}UpdateSetBuilder", struct_name);
+    let where_builder_name = quote::format_ident!("{}UpdateWhereBuilder", struct_name);
     let args_struct_name = quote::format_ident!("{}UpdateBuilderArgs", struct_name);
     let table_name = &config.table_name;
     let database_type = get_database_type(config.database);
@@ -988,8 +1047,8 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
         _ => panic!("Only structs are supported"),
     };
 
-    // Generate on_* methods (for SET clause)
-    let on_methods = fields.iter().map(|field| {
+    // Generate on_* methods for SET builder (returns Self)
+    let set_builder_on_methods = fields.iter().map(|field| {
         let field_name = field.ident.as_ref().unwrap();
         let column_name = get_field_name_as_column(field, config.database);
         let on_method = quote::format_ident!("on_{}", field_name);
@@ -1008,7 +1067,8 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 /// Set field value for UPDATE
                 pub fn #on_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
                     self.set_clauses.push(#set_clause_literal.to_string());
-                    self.where_args.add_param(value)?;
+                    self.args.add_param(value)?;
+                    self.set_count += 1;
                     Ok(self)
                 }
             }
@@ -1017,15 +1077,34 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 /// Set field value for UPDATE
                 pub fn #on_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
                     self.set_clauses.push(#set_clause_literal.to_string());
-                    self.where_args.add_param(value)?;
+                    self.args.add_param(value)?;
+                    self.set_count += 1;
                     Ok(self)
                 }
             }
         }
     }).collect::<Vec<_>>();
 
-    // Generate by_* methods (for WHERE clause) - reuse field methods but rename them
-    let by_methods = fields.iter().map(|field| {
+    // Generate by_* methods for SET builder (returns WhereBuilder)
+    let set_builder_by_methods = fields.iter().map(|field| {
+        let field_name = field.ident.as_ref().unwrap();
+        let column_name = get_field_name_as_column(field, config.database);
+        let field_type = &field.ty;
+
+        // Determine field type category
+        let type_str = quote!(#field_type).to_string();
+
+        if is_string_type(&type_str) {
+            generate_update_set_to_where_string_methods(field_name, &column_name, config.database, &where_builder_name)
+        } else if is_numeric_or_datetime_type(&type_str) {
+            generate_update_set_to_where_numeric_datetime_methods(field_name, &column_name, config.database, field_type, &where_builder_name)
+        } else {
+            generate_update_set_to_where_basic_methods(field_name, &column_name, config.database, field_type, &where_builder_name)
+        }
+    }).collect::<Vec<_>>();
+
+    // Generate by_* methods for WHERE builder (returns Self)
+    let where_builder_by_methods = fields.iter().map(|field| {
         let field_name = field.ident.as_ref().unwrap();
         let column_name = get_field_name_as_column(field, config.database);
         let field_type = &field.ty;
@@ -1043,8 +1122,12 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
     }).collect::<Vec<_>>();
 
     // Generate custom condition methods
-    let custom_methods = config.custom_conditions.iter().map(|condition| {
-        generate_custom_condition_method(condition, config.database, &config.fields)
+    let set_builder_custom_methods = config.custom_conditions.iter().map(|condition| {
+        generate_custom_condition_method_for_set_builder(condition, config.database, &config.fields, &where_builder_name)
+    }).collect::<Vec<_>>();
+
+    let where_builder_custom_methods = config.custom_conditions.iter().map(|condition| {
+        generate_custom_condition_method_for_update_where_builder(condition, config.database, &config.fields)
     }).collect::<Vec<_>>();
 
     // Pre-generate UPDATE SQL template
@@ -1054,9 +1137,19 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
     // Generate placeholder replacement function based on database type
     let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
 
+    // Generate instrument attributes for update builder methods
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro
+    let instrument_name_update_execute = format!("{}::builder_update_execute", &struct_name_str);
+    let instrument_attr_update_execute = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_update_execute, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         /// UpdateBuilderArgs for parameter binding
-
         #[derive(Clone)]
         pub struct #args_struct_name<'q, DB: sqlx::Database>(pub Box<DB::Arguments<'q>>, usize);
         impl<'q, DB: sqlx::Database> Default for #args_struct_name<'q, DB> {
@@ -1081,25 +1174,27 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             }
         }
 
-
-        /// Generated update builder
-        pub struct #builder_name<'q> {
+        /// Update SET builder - can add SET clauses or move to WHERE builder
+        pub struct #set_builder_name<'q> {
             table_name: String,
             set_clauses: Vec<String>,
+            set_count: usize,
             where_conditions: Vec<String>,
-            where_args: #args_struct_name<'q, #database_type>,
+            where_count: usize,
+            args: #args_struct_name<'q, #database_type>,
         }
 
-        impl <'q> #builder_name<'q> {
-
+        impl<'q> #set_builder_name<'q> {
             #[inline]
-            pub fn clone(&self) -> #builder_name<'q> {
-                let cloned_where_args = #args_struct_name(Box::new(self.where_args.0.as_ref().clone()), self.where_args.1);
-                #builder_name {
+            pub fn clone(&self) -> #set_builder_name<'q> {
+                let cloned_args = #args_struct_name(Box::new(self.args.0.as_ref().clone()), self.args.1);
+                #set_builder_name {
                     table_name: self.table_name.clone(),
-                    where_conditions: self.where_conditions.clone(),
-                    where_args: cloned_where_args,
                     set_clauses: self.set_clauses.clone(),
+                    set_count: self.set_count,
+                    where_conditions: self.where_conditions.clone(),
+                    where_count: self.where_count,
+                    args: cloned_args,
                 }
             }
 
@@ -1107,14 +1202,16 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
                 Self {
                     table_name: #table_name.to_string(),
                     set_clauses: Vec::new(),
+                    set_count: 0,
                     where_conditions: Vec::new(),
-                    where_args: #args_struct_name::default(),
+                    where_count: 0,
+                    args: #args_struct_name::default(),
                 }
             }
 
-            #(#on_methods)*
-            #(#by_methods)*
-            #(#custom_methods)*
+            #(#set_builder_on_methods)*
+            #(#set_builder_by_methods)*
+            #(#set_builder_custom_methods)*
 
             // Add placeholder replacement function
             #placeholder_replacement_fn
@@ -1127,27 +1224,129 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
                 let mut sql = #update_base_literal.to_string();
                 sql.push_str(" SET ");
-                sql.push_str(&self.set_clauses.join(", "));
+                
+                // Replace placeholders in SET clauses first
+                let set_clause_str = self.set_clauses.join(", ");
+                let replaced_set = Self::replace_placeholders(&set_clause_str, self.set_count);
+                sql.push_str(&replaced_set);
 
                 if !self.where_conditions.is_empty() {
                     sql.push_str(" WHERE ");
-                    sql.push_str(&self.where_conditions.join(" AND "));
+                    // Replace placeholders in WHERE clauses, starting after SET args
+                    let where_clause_str = self.where_conditions.join(" AND ");
+                    let mut replaced_where = Self::replace_placeholders(&where_clause_str, self.where_count);
+                    
+                    // Adjust placeholder numbers for WHERE clause (PostgreSQL only)
+                    for i in (1..=self.where_count).rev() {
+                        let old_placeholder = format!("${}", i);
+                        let new_placeholder = format!("${}", i + self.set_count);
+                        replaced_where = replaced_where.replace(&old_placeholder, &new_placeholder);
+                    }
+                    sql.push_str(&replaced_where);
                 }
 
-                // Replace all placeholders at once with correct positions
-                Self::replace_placeholders(&sql, self.where_args.len())
+                sql
             }
 
             /// Execute update query
-            pub async fn execute<'c, E>(self, executor: E) -> Result<u64, sqlx::Error>
+            #instrument_attr_update_execute
+            #[inline]
+            pub async fn execute<'c, E>(self, conn: E) -> Result<u64, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
                 let sql = self.build_sql();
-                let where_args = self.where_args;
-
-                let result = sqlx::query_with(&sql, *where_args.0).execute(executor).await?;
+                let result = sqlx::query_with(&sql, *self.args.0).execute(conn).await?;
                 Ok(result.rows_affected())
+            }
+        }
+
+        /// Update WHERE builder - can only add WHERE clauses
+        pub struct #where_builder_name<'q> {
+            table_name: String,
+            set_clauses: Vec<String>,
+            set_count: usize,
+            where_conditions: Vec<String>,
+            where_count: usize,
+            args: #args_struct_name<'q, #database_type>,
+        }
+
+        impl<'q> #where_builder_name<'q> {
+            #[inline]
+            pub fn clone(&self) -> #where_builder_name<'q> {
+                let cloned_args = #args_struct_name(Box::new(self.args.0.as_ref().clone()), self.args.1);
+                #where_builder_name {
+                    table_name: self.table_name.clone(),
+                    set_clauses: self.set_clauses.clone(),
+                    set_count: self.set_count,
+                    where_conditions: self.where_conditions.clone(),
+                    where_count: self.where_count,
+                    args: cloned_args,
+                }
+            }
+
+            #(#where_builder_by_methods)*
+            #(#where_builder_custom_methods)*
+
+            // Add placeholder replacement function
+            #placeholder_replacement_fn
+
+            /// Build SQL query string
+            pub fn build_sql(&self) -> String {
+                if self.set_clauses.is_empty() {
+                    panic!("UPDATE query must have at least one SET clause. Use on_* methods.");
+                }
+
+                let mut sql = #update_base_literal.to_string();
+                sql.push_str(" SET ");
+                
+                // Replace placeholders in SET clauses first
+                let set_clause_str = self.set_clauses.join(", ");
+                let replaced_set = Self::replace_placeholders(&set_clause_str, self.set_count);
+                sql.push_str(&replaced_set);
+
+                if !self.where_conditions.is_empty() {
+                    sql.push_str(" WHERE ");
+                    // Replace placeholders in WHERE clauses, starting after SET args
+                    let where_clause_str = self.where_conditions.join(" AND ");
+                    let mut replaced_where = Self::replace_placeholders(&where_clause_str, self.where_count);
+                    
+                    // Adjust placeholder numbers for WHERE clause (PostgreSQL only)
+                    for i in (1..=self.where_count).rev() {
+                        let old_placeholder = format!("${}", i);
+                        let new_placeholder = format!("${}", i + self.set_count);
+                        replaced_where = replaced_where.replace(&old_placeholder, &new_placeholder);
+                    }
+                    sql.push_str(&replaced_where);
+                }
+
+                sql
+            }
+
+            /// Execute update query
+            #instrument_attr_update_execute
+            #[inline]
+            pub async fn execute<'c, E>(self, conn: E) -> Result<u64, sqlx::Error>
+            where
+                E: sqlx::Executor<'c, Database = #database_type>,
+            {
+                let sql = self.build_sql();
+                let result = sqlx::query_with(&sql, *self.args.0).execute(conn).await?;
+                Ok(result.rows_affected())
+            }
+        }
+
+        // Implement Into conversion from SetBuilder to WhereBuilder
+        impl<'q> Into<#where_builder_name<'q>> for #set_builder_name<'q> {
+            fn into(self) -> #where_builder_name<'q> {
+                #where_builder_name {
+                    table_name: self.table_name,
+                    set_clauses: self.set_clauses,
+                    set_count: self.set_count,
+                    where_conditions: self.where_conditions,
+                    where_count: self.where_count,
+                    args: self.args,
+                }
             }
         }
 
@@ -1159,6 +1358,13 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             /// - WHERE conditions using `.by_field_name(value)` methods to specify which records to update
             /// - Custom WHERE conditions (if defined with `#[tp_update_builder(...)]`)
             /// - Query execution with `.execute()` method that returns the number of affected rows
+            ///
+            /// # Builder Flow
+            ///
+            /// The builder starts as `UpdateSetBuilder` where you can add SET clauses with `on_*` methods.
+            /// When you call a `by_*` method (for WHERE conditions), it converts to `UpdateWhereBuilder`.
+            /// Once in `UpdateWhereBuilder`, you can only add more WHERE conditions - you cannot go back
+            /// to add more SET clauses. This ensures proper SQL parameter ordering.
             ///
             /// # Example
             ///
@@ -1177,18 +1383,17 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
             /// # let pool = SqlitePool::connect(":memory:").await?;
             /// # let user_id = 1;
-            /// // Update user email and status
+            /// // Start with SET clauses, then add WHERE conditions
             /// let affected_rows = User::builder_update()
-            ///     .on_email("newemail@example.com")?     // SET email = ?
-            ///     .on_active(&true)?                     // SET active = ?
-            ///     .by_id(&user_id)?                      // WHERE id = ?
+            ///     .on_email("newemail@example.com")?     // UpdateSetBuilder: SET email = ?
+            ///     .on_active(&true)?                     // UpdateSetBuilder: SET active = ?
+            ///     .by_id(&user_id)?                      // -> UpdateWhereBuilder: WHERE id = ?
             ///     .execute(&pool)
             ///     .await?;
             ///
-            /// // Bulk update with custom conditions (if defined)
+            /// // Can also execute directly from UpdateSetBuilder (without WHERE clause)
             /// let affected_rows = User::builder_update()
-            ///     .on_status("verified")?
-            ///     .with_email_domain("@company.com")?    // Custom WHERE condition
+            ///     .on_email("newemail@example.com")?
             ///     .execute(&pool)
             ///     .await?;
             /// # Ok(())
@@ -1197,15 +1402,197 @@ pub fn impl_update_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             ///
             /// # Returns
             ///
-            /// A new `UpdateBuilder` instance ready for method chaining.
-            pub fn builder_update<'q>() -> #builder_name<'q> {
-                #builder_name::new()
+            /// A new `UpdateSetBuilder` instance ready for method chaining.
+            pub fn builder_update<'q>() -> #set_builder_name<'q> {
+                #set_builder_name::new()
             }
         }
     }
 }
 
-/// Generate by_* methods cho string fields trong update builder
+/// Generate by_* methods for SetBuilder that returns WhereBuilder (string fields)
+fn generate_update_set_to_where_string_methods(field_name: &Ident, column_name: &str, database: Database, where_builder_name: &Ident) -> TokenStream {
+    let by_method = quote::format_ident!("by_{}", field_name);
+    let by_not_method = quote::format_ident!("by_{}_not", field_name);
+    let by_like_method = quote::format_ident!("by_{}_like", field_name);
+    let by_start_with_method = quote::format_ident!("by_{}_start_with", field_name);
+    let by_end_with_method = quote::format_ident!("by_{}_end_with", field_name);
+
+    let placeholder = get_placeholder_template(database);
+
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
+    let like_condition = format!("{} LIKE {}", column_name, placeholder);
+
+    let eq_condition_literal = Literal::string(&eq_condition);
+    let neq_condition_literal = Literal::string(&neq_condition);
+    let like_condition_literal = Literal::string(&like_condition);
+
+    quote! {
+        /// WHERE equality condition (returns WhereBuilder)
+        pub fn #by_method(self, value: &'q str) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#eq_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE not equal condition (returns WhereBuilder)
+        pub fn #by_not_method(self, value: &'q str) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#neq_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE LIKE condition (returns WhereBuilder)
+        pub fn #by_like_method(self, pattern: &'q str) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#like_condition_literal.to_string());
+            builder.args.add_param(pattern)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE STARTS WITH condition (returns WhereBuilder)
+        pub fn #by_start_with_method(self, value: &'q str) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#like_condition_literal.to_string());
+            builder.args.add_param(format!("{}%", value))?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE ENDS WITH condition (returns WhereBuilder)
+        pub fn #by_end_with_method(self, value: &'q str) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#like_condition_literal.to_string());
+            builder.args.add_param(format!("%{}", value))?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+    }
+}
+
+/// Generate by_* methods for SetBuilder that returns WhereBuilder (numeric/datetime fields)
+fn generate_update_set_to_where_numeric_datetime_methods(field_name: &Ident, column_name: &str, database: Database, field_type: &SynType, where_builder_name: &Ident) -> TokenStream {
+    let by_method = quote::format_ident!("by_{}", field_name);
+    let by_not_method = quote::format_ident!("by_{}_not", field_name);
+    let by_gt_method = quote::format_ident!("by_{}_gt", field_name);
+    let by_gte_method = quote::format_ident!("by_{}_gte", field_name);
+    let by_lt_method = quote::format_ident!("by_{}_lt", field_name);
+    let by_lte_method = quote::format_ident!("by_{}_lte", field_name);
+
+    let placeholder = get_placeholder_template(database);
+
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
+    let gt_condition = format!("{} > {}", column_name, placeholder);
+    let gte_condition = format!("{} >= {}", column_name, placeholder);
+    let lt_condition = format!("{} < {}", column_name, placeholder);
+    let lte_condition = format!("{} <= {}", column_name, placeholder);
+
+    let eq_condition_literal = Literal::string(&eq_condition);
+    let neq_condition_literal = Literal::string(&neq_condition);
+    let gt_condition_literal = Literal::string(&gt_condition);
+    let gte_condition_literal = Literal::string(&gte_condition);
+    let lt_condition_literal = Literal::string(&lt_condition);
+    let lte_condition_literal = Literal::string(&lte_condition);
+
+    quote! {
+        /// WHERE equality condition (returns WhereBuilder)
+        pub fn #by_method(self, value: &'q #field_type) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#eq_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE not equal condition (returns WhereBuilder)
+        pub fn #by_not_method(self, value: &'q #field_type) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#neq_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE greater than condition (returns WhereBuilder)
+        pub fn #by_gt_method(self, value: &'q #field_type) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#gt_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE greater than or equal condition (returns WhereBuilder)
+        pub fn #by_gte_method(self, value: &'q #field_type) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#gte_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE less than condition (returns WhereBuilder)
+        pub fn #by_lt_method(self, value: &'q #field_type) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#lt_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE less than or equal condition (returns WhereBuilder)
+        pub fn #by_lte_method(self, value: &'q #field_type) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#lte_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+    }
+}
+
+/// Generate by_* methods for SetBuilder that returns WhereBuilder (basic fields)
+fn generate_update_set_to_where_basic_methods(field_name: &Ident, column_name: &str, database: Database, field_type: &SynType, where_builder_name: &Ident) -> TokenStream {
+    let by_method = quote::format_ident!("by_{}", field_name);
+    let by_not_method = quote::format_ident!("by_{}_not", field_name);
+
+    let placeholder = get_placeholder_template(database);
+
+    let eq_condition = format!("{} = {}", column_name, placeholder);
+    let neq_condition = format!("{} != {}", column_name, placeholder);
+
+    let eq_condition_literal = Literal::string(&eq_condition);
+    let neq_condition_literal = Literal::string(&neq_condition);
+
+    quote! {
+        /// WHERE equality condition (returns WhereBuilder)
+        pub fn #by_method(self, value: &'q #field_type) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#eq_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+
+        /// WHERE not equal condition (returns WhereBuilder)
+        pub fn #by_not_method(self, value: &'q #field_type) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#neq_condition_literal.to_string());
+            builder.args.add_param(value)?;
+            builder.where_count += 1;
+            Ok(builder)
+        }
+    }
+}
+
+/// Generate by_* methods cho string fields trong update builder (for WhereBuilder)
 fn generate_update_string_methods(field_name: &Ident, column_name: &str, database: Database) -> TokenStream {
     let by_method = quote::format_ident!("by_{}", field_name);
     let by_not_method = quote::format_ident!("by_{}_not", field_name);
@@ -1229,41 +1616,46 @@ fn generate_update_string_methods(field_name: &Ident, column_name: &str, databas
         /// WHERE equality condition
         pub fn #by_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#eq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE not equal condition
         pub fn #by_not_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#neq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE LIKE condition
         pub fn #by_like_method(mut self, pattern: &'q str) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#like_condition_literal.to_string());
-            self.where_args.add_param(pattern)?;
+            self.args.add_param(pattern)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE STARTS WITH condition
         pub fn #by_start_with_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#like_condition_literal.to_string());
-            self.where_args.add_param(format!("{}%", value))?;
+            self.args.add_param(format!("{}%", value))?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE ENDS WITH condition
         pub fn #by_end_with_method(mut self, value: &'q str) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#like_condition_literal.to_string());
-            self.where_args.add_param(format!("%{}", value))?;
+            self.args.add_param(format!("%{}", value))?;
+            self.where_count += 1;
             Ok(self)
         }
     }
 }
 
-/// Generate by_* methods cho numeric/datetime fields trong update builder
+/// Generate by_* methods cho numeric/datetime fields trong update builder (for WhereBuilder)
 fn generate_update_numeric_datetime_methods(field_name: &Ident, column_name: &str, database: Database, field_type: &SynType) -> TokenStream {
     let by_method = quote::format_ident!("by_{}", field_name);
     let by_not_method = quote::format_ident!("by_{}_not", field_name);
@@ -1294,48 +1686,54 @@ fn generate_update_numeric_datetime_methods(field_name: &Ident, column_name: &st
         /// WHERE equality condition
         pub fn #by_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#eq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE not equal condition
         pub fn #by_not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#neq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE greater than condition
         pub fn #by_gt_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#gt_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE greater than or equal condition
         pub fn #by_gte_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#gte_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE less than condition
         pub fn #by_lt_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#lt_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE less than or equal condition
         pub fn #by_lte_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#lte_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
     }
 }
 
-/// Generate by_* basic methods cho other types trong update builder
+/// Generate by_* basic methods cho other types trong update builder (for WhereBuilder)
 fn generate_update_basic_methods(field_name: &Ident, column_name: &str, database: Database, field_type: &SynType) -> TokenStream {
     let by_method = quote::format_ident!("by_{}", field_name);
     let by_not_method = quote::format_ident!("by_{}_not", field_name);
@@ -1354,14 +1752,16 @@ fn generate_update_basic_methods(field_name: &Ident, column_name: &str, database
         /// WHERE equality condition
         pub fn #by_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#eq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
 
         /// WHERE not equal condition
         pub fn #by_not_method(mut self, value: &'q #field_type) -> Result<Self, sqlx::Error> {
             self.where_conditions.push(#neq_condition_literal.to_string());
-            self.where_args.add_param(value)?;
+            self.args.add_param(value)?;
+            self.where_count += 1;
             Ok(self)
         }
     }
@@ -1370,6 +1770,7 @@ fn generate_update_basic_methods(field_name: &Ident, column_name: &str, database
 /// Implement delete builder macro
 pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -> TokenStream {
     let struct_name = &input.ident;
+    let struct_name_str = struct_name.to_string();
     let builder_name = quote::format_ident!("{}DeleteBuilder", struct_name);
     let args_struct_name = quote::format_ident!("{}DeleteBuilderArgs", struct_name);
     let table_name = &config.table_name;
@@ -1400,6 +1801,17 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
     // Generate placeholder replacement function based on database type
     let placeholder_replacement_fn = generate_placeholder_replacement_fn(config.database);
+
+    // Generate instrument attributes for delete builder methods
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro
+    let instrument_name_delete_execute = format!("{}::builder_delete_execute", &struct_name_str);
+    let instrument_attr_delete_execute = if cfg!(feature = "tracing") {
+        quote! {
+            #[tracing::instrument(name = #instrument_name_delete_execute, skip_all)]
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
         /// DeleteBuilderArgs for parameter binding
@@ -1478,14 +1890,16 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
             }
 
             /// Execute delete query
-            pub async fn execute<'c, E>(self, executor: E) -> Result<u64, sqlx::Error>
+            #instrument_attr_delete_execute
+            #[inline]
+            pub async fn execute<'c, E>(self, conn: E) -> Result<u64, sqlx::Error>
             where
                 E: sqlx::Executor<'c, Database = #database_type>,
             {
                 let sql = self.build_sql();
                 let where_args = self.where_args;
 
-                let result = sqlx::query_with(&sql, *where_args.0).execute(executor).await?;
+                let result = sqlx::query_with(&sql, *where_args.0).execute(conn).await?;
                 Ok(result.rows_affected())
             }
         }
@@ -1554,8 +1968,140 @@ pub fn impl_delete_builder(input: &DeriveInput, config: &super::BuilderConfig) -
 
 
 
-/// Generate custom condition method from CustomCondition
-fn generate_custom_condition_method(condition: &super::CustomCondition, database: Database, fields: &[Field]) -> TokenStream {
+/// Generate custom condition method for SetBuilder that returns WhereBuilder
+fn generate_custom_condition_method_for_set_builder(condition: &super::CustomCondition, database: Database, fields: &[Field], where_builder_name: &Ident) -> TokenStream {
+    use crate::parser;
+
+    let method_name = quote::format_ident!("{}", condition.method_name);
+    let sql_expression = &condition.sql_expression;
+
+    // Use the same logic as select.rs - parse SQL expression with parser
+    let par_res = match parser::get_columns_and_compound_ids(
+        sql_expression,
+        crate::sqlx_template::get_database_dialect(database),
+    ) {
+        Ok(res) => res,
+        Err(e) => {
+            return quote! {
+                compile_error!(concat!("Failed to parse custom condition SQL: ", #e));
+            };
+        }
+    };
+
+    // Check for table aliases in SQL expression (not allowed in builder conditions)
+    if sql_expression.contains('.') {
+        return quote! {
+            compile_error!("Custom conditions in builders do not support table aliases (table.column). Use column names only.");
+        };
+    }
+
+    // Generate method parameters based on placeholders (same logic as WhereBuilder method)
+    let mut method_params = Vec::new();
+    let mut param_bindings = Vec::new();
+
+    for placeholder in &par_res.placeholder_vars {
+        let placeholder_name = &placeholder[1..]; // Remove ':' prefix
+
+        // Check if placeholder has format :name$Type
+        if placeholder_name.contains('$') {
+            // Case: Placeholder with custom type format :name$Type
+            if let Some(dollar_pos) = placeholder_name.find('$') {
+                let var_name = &placeholder_name[..dollar_pos];
+                let type_name = &placeholder_name[dollar_pos + 1..];
+
+                let param_ident = quote::format_ident!("{}", var_name);
+                let param_type = match type_name {
+                    "i32" => quote!(i32),
+                    "i64" => quote!(i64),
+                    "f32" => quote!(f32),
+                    "f64" => quote!(f64),
+                    "bool" => quote!(bool),
+                    "String" => quote!(&'q str),
+                    "str" => quote!(&'q str),
+                    _ => {
+                        let type_ident = syn::parse_str::<syn::Type>(type_name).unwrap_or_else(|_| {
+                            syn::parse_quote!(#type_name)
+                        });
+                        quote!(#type_ident)
+                    }
+                };
+
+                method_params.push(quote!(#param_ident: #param_type));
+                param_bindings.push(quote! {
+                    builder.args.add_param(#param_ident)?;
+                    builder.where_count += 1;
+                });
+            } else {
+                return quote! {
+                    compile_error!(concat!("Placeholder ", #placeholder, " contains '$' but format is invalid"));
+                };
+            }
+        }
+        // Check if placeholder is mapped to a column
+        else if let Some(columns) = par_res.get_columns_for_placeholder(placeholder) {
+            if columns.len() == 1 {
+                let column_name = columns.iter().next().unwrap();
+                if condition.columns.contains(column_name) {
+                    if let Some(field) = fields.iter().find(|f| {
+                        crate::sqlx_template::get_field_name_as_column(f, database) == *column_name
+                    }) {
+                        let param_ident = quote::format_ident!("{}", placeholder_name);
+                        let arg_type = &field.ty;
+
+                        let param_type = if &arg_type.to_token_stream().to_string() == "String" {
+                            quote!(&'q str)
+                        } else {
+                            quote!(#arg_type)
+                        };
+
+                        method_params.push(quote!(#param_ident: #param_type));
+                        param_bindings.push(quote! {
+                            builder.args.add_param(#param_ident)?;
+                            builder.where_count += 1;
+                        });
+                    } else {
+                        return quote! {
+                            compile_error!(concat!("Column '", #column_name, "' not found in struct fields"));
+                        };
+                    }
+                } else {
+                    return quote! {
+                        compile_error!(concat!("Column '", #column_name, "' referenced in placeholder but not found in SQL expression"));
+                    };
+                }
+            } else {
+                return quote! {
+                    compile_error!(concat!("Placeholder '", #placeholder, "' maps to multiple columns, which is not supported"));
+                };
+            }
+        } else {
+            return quote! {
+                compile_error!(concat!("Placeholder '", #placeholder, "' must specify a type using format ':name$type' or map to a column"));
+            };
+        }
+    }
+
+    // Replace placeholders with database-specific parameter markers
+    let mut condition_sql = sql_expression.to_string();
+    let placeholder_template = get_placeholder_template(database);
+    for placeholder in &par_res.placeholder_vars {
+        condition_sql = condition_sql.replace(placeholder, placeholder_template);
+    }
+    let condition_sql_literal = proc_macro2::Literal::string(&condition_sql);
+
+    quote! {
+        /// Custom condition method (returns WhereBuilder)
+        pub fn #method_name(self, #(#method_params),*) -> Result<#where_builder_name<'q>, sqlx::Error> {
+            let mut builder: #where_builder_name<'q> = self.into();
+            builder.where_conditions.push(#condition_sql_literal.to_string());
+            #(#param_bindings)*
+            Ok(builder)
+        }
+    }
+}
+
+/// Generate custom condition method for UpdateWhereBuilder (uses args and where_count)
+fn generate_custom_condition_method_for_update_where_builder(condition: &super::CustomCondition, database: Database, fields: &[Field]) -> TokenStream {
     use crate::parser;
 
     let method_name = quote::format_ident!("{}", condition.method_name);
@@ -1615,7 +2161,10 @@ fn generate_custom_condition_method(condition: &super::CustomCondition, database
                 };
 
                 method_params.push(quote!(#param_ident: #param_type));
-                param_bindings.push(quote!(self.where_args.add_param(#param_ident)?;));
+                param_bindings.push(quote! {
+                    self.args.add_param(#param_ident)?;
+                    self.where_count += 1;
+                });
             } else {
                 return quote! {
                     compile_error!(concat!("Placeholder ", #placeholder, " contains '$' but format is invalid"));
@@ -1643,7 +2192,10 @@ fn generate_custom_condition_method(condition: &super::CustomCondition, database
                         };
 
                         method_params.push(quote!(#param_ident: #param_type));
-                        param_bindings.push(quote!(self.where_args.add_param(#param_ident)?;));
+                        param_bindings.push(quote! {
+                            self.args.add_param(#param_ident)?;
+                            self.where_count += 1;
+                        });
                     } else {
                         return quote! {
                             compile_error!(concat!("Column '", #column_name, "' not found in struct fields"));
@@ -1707,6 +2259,158 @@ fn generate_custom_condition_method(condition: &super::CustomCondition, database
         #[doc = #doc_literal]
         pub fn #method_name(mut self, #(#method_params),*) -> Result<Self, sqlx::Error> {
             // Add parameters to args
+            #(#param_bindings)*
+
+            // Add condition to where clauses
+            self.where_conditions.push(#condition_sql_literal.to_string());
+
+            Ok(self)
+        }
+    }
+}
+
+/// Generate custom condition method for SelectBuilder/DeleteBuilder (uses where_args)
+fn generate_custom_condition_method(condition: &super::CustomCondition, database: Database, fields: &[Field]) -> TokenStream {
+    use crate::parser;
+
+    let method_name = quote::format_ident!("{}", condition.method_name);
+    let sql_expression = &condition.sql_expression;
+
+    // Parse SQL expression with parser
+    let par_res = match parser::get_columns_and_compound_ids(
+        sql_expression,
+        crate::sqlx_template::get_database_dialect(database),
+    ) {
+        Ok(res) => res,
+        Err(e) => {
+            return quote! {
+                compile_error!(concat!("Failed to parse SQL expression in custom condition: ", #sql_expression, " - Error: ", stringify!(#e)));
+            };
+        }
+    };
+
+    // Check for table aliases
+    if sql_expression.contains('.') {
+        return quote! {
+            compile_error!(concat!("Table aliases are not allowed in builder custom conditions. Found '.' in: ", #sql_expression));
+        };
+    }
+
+    // Generate method parameters based on placeholders
+    let mut method_params = Vec::new();
+    let mut param_bindings = Vec::new();
+
+    for placeholder in &par_res.placeholder_vars {
+        let placeholder_name = &placeholder[1..]; // Remove ':' prefix
+
+        // Check if placeholder has format :name$Type
+        if placeholder_name.contains('$') {
+            if let Some(dollar_pos) = placeholder_name.find('$') {
+                let var_name = &placeholder_name[..dollar_pos];
+                let type_name = &placeholder_name[dollar_pos + 1..];
+
+                let param_ident = quote::format_ident!("{}", var_name);
+                let param_type = match type_name {
+                    "i32" => quote!(i32),
+                    "i64" => quote!(i64),
+                    "f32" => quote!(f32),
+                    "f64" => quote!(f64),
+                    "bool" => quote!(bool),
+                    "String" => quote!(&'q str),
+                    "str" => quote!(&'q str),
+                    _ => {
+                        let type_ident = syn::parse_str::<syn::Type>(type_name).unwrap_or_else(|_| {
+                            syn::parse_quote!(#type_name)
+                        });
+                        quote!(#type_ident)
+                    }
+                };
+
+                method_params.push(quote!(#param_ident: #param_type));
+                param_bindings.push(quote! {
+                    self.where_args.add_param(#param_ident)?;
+                });
+            } else {
+                return quote! {
+                    compile_error!(concat!("Placeholder ", #placeholder, " contains '$' but format is invalid"));
+                };
+            }
+        }
+        // Check if placeholder is mapped to a column
+        else if let Some(columns) = par_res.get_columns_for_placeholder(placeholder) {
+            if columns.len() == 1 {
+                let column_name = columns.iter().next().unwrap();
+                if condition.columns.contains(column_name) {
+                    if let Some(field) = fields.iter().find(|f| {
+                        crate::sqlx_template::get_field_name_as_column(f, database) == *column_name
+                    }) {
+                        let param_ident = quote::format_ident!("{}", placeholder_name);
+                        let arg_type = &field.ty;
+
+                        let param_type = if &arg_type.to_token_stream().to_string() == "String" {
+                            quote!(&'q str)
+                        } else {
+                            quote!(#arg_type)
+                        };
+
+                        method_params.push(quote!(#param_ident: #param_type));
+                        param_bindings.push(quote! {
+                            self.where_args.add_param(#param_ident)?;
+                        });
+                    } else {
+                        return quote! {
+                            compile_error!(concat!("Column '", #column_name, "' not found in struct fields"));
+                        };
+                    }
+                } else {
+                    return quote! {
+                        compile_error!(concat!("Column '", #column_name, "' referenced in placeholder but not found in SQL expression"));
+                    };
+                }
+            } else {
+                return quote! {
+                    compile_error!(concat!("Placeholder '", #placeholder, "' maps to multiple columns, which is not supported"));
+                };
+            }
+        } else {
+            return quote! {
+                compile_error!(concat!("Placeholder '", #placeholder, "' must specify a type using format ':name$type' or map to a column"));
+            };
+        }
+    }
+
+    // Replace placeholders with database-specific markers
+    let mut condition_sql = sql_expression.to_string();
+    let placeholder_template = get_placeholder_template(database);
+    for placeholder in &par_res.placeholder_vars {
+        condition_sql = condition_sql.replace(placeholder, placeholder_template);
+    }
+    let condition_sql_literal = proc_macro2::Literal::string(&condition_sql);
+
+    // Create documentation
+    let param_docs = if method_params.is_empty() {
+        String::new()
+    } else {
+        let param_list = method_params.iter()
+            .enumerate()
+            .map(|(i, _)| format!("- `{}`: Parameter for placeholder in SQL condition",
+                                 condition.parameters.get(i).unwrap_or(&format!("param_{}", i))))
+            .collect::<Vec<_>>()
+            .join("\n/// ");
+        format!("\n/// \n/// # Parameters\n/// \n/// {}", param_list)
+    };
+
+    let doc_string = format!(
+        "Custom WHERE condition: `{}`{}",
+        sql_expression,
+        param_docs
+    );
+    let doc_literal = proc_macro2::Literal::string(&doc_string);
+
+    quote! {
+        #[doc = #doc_literal]
+        pub fn #method_name(mut self, #(#method_params),*) -> Result<Self, sqlx::Error> {
+            // Add parameters to where_args
             #(#param_bindings)*
 
             // Add condition to where clauses

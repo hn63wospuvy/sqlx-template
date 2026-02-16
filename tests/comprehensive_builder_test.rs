@@ -61,8 +61,8 @@ pub struct UserDelete {
 )]
 async fn create_users_table() {}
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_comprehensive_builders() -> Result<(), Box<dyn std::error::Error>> {
     println!("🧪 Comprehensive Builder Test");
     println!("Testing all builder features and improvements");
     

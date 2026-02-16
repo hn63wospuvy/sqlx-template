@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use sqlx::types::Json;
 use sqlx_template::*;
 use sqlx::FromRow;
 use sqlx::types::chrono::DateTime;
@@ -18,10 +21,16 @@ pub struct Page<T> {
 #[tp_delete(where = "active = :active and 2 * id > :min_id$i32", returning = true)]
 // #[tp_select_one(by = "id, sender", order = "id desc", where = "active = :active", fn_name = "get_by_sender_active")]
 #[tp_update(by = "id", where = "groups = :sender", returning = true)]
-#[tp_update(by = "id", on = "content", where = "access = :sender", returning = "id, sender")]
+#[tp_update(where = "groups = :sender", returning = true)]
+#[tp_update(by = "id", on = "content", where = "access = :sender", fn_name = "update_content_return", returning = "id, sender")]
 // #[tp_update(by = "id", on = "receiver", where = "sender = :sender")]
 // #[tp_upsert(by = "id", on = "sender, content", fn_name = "test1")]
 #[tp_select_page(order = "created_at desc")]
+#[tp_select_page(order = "user desc")]
+#[tp_select_page(where = "id IS NOT NULL", order = "created_at desc", fn_name = "test1")]
+#[tp_select_builder(
+    with_user_email = "user->>'email' ILIKE :user_email$String",
+)]
 pub struct Chat {
     pub id: i32,
     pub sender: i32,
@@ -29,6 +38,7 @@ pub struct Chat {
     pub content: String,
     pub groups: String,
     pub access: String,
+    pub user: Json<HashMap<String, String>>,
     pub active: bool,
     pub created_by: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -65,3 +75,7 @@ pub async fn get_active_chats(active: bool) -> Page<Chat> {}
 
 // Include test module
 pub mod test_count_query;
+
+async fn test() {
+    // let r = Chat::update_content_return(todo!(), todo!(), todo!(), todo!()).await;
+}

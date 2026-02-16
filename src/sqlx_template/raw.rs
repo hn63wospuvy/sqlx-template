@@ -77,51 +77,77 @@ fn get_query_string(nested_meta: Option<&NestedMeta>) -> syn::Result<String> {
     Ok(res)
 }
 
-fn get_debug_slow(nested_meta: Option<&NestedMeta>) -> syn::Result<i32> { 
-    let res = match nested_meta {
-        Some(NestedMeta::Lit(Lit::Int(slow_in_ms))) => {
-            slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"))?
-        }
-        Some(NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, eq_token}))) => {
-            let path_name = path.segments
-            .first()
-            .expect("Invalid name-value marco at second attribute")
-            .ident
-            .to_string()
-            ;
-            if "debug" != path_name.as_str() {
-                panic!("Second attribute name must be 'debug'");
+fn get_debug_slow(args: &AttributeArgs) -> syn::Result<i32> {
+    for arg in args {
+        match arg {
+            NestedMeta::Lit(Lit::Int(slow_in_ms)) => {
+                return slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"));
             }
-            match lit {
-                Lit::Int(slow_in_ms) => {
-                    slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"))?
-                },
-                _ => panic!("Expected a number for the query in the second name-value attribute")
+            NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, ..})) => {
+                if path.is_ident("debug") {
+                    match lit {
+                        Lit::Int(slow_in_ms) => {
+                            return slow_in_ms.base10_parse().map_err(|x| syn::Error::new(Span::call_site(), "Value is not valid integer"));
+                        },
+                        _ => panic!("Expected a number for debug attribute")
+                    }
+                }
+            }
+            NestedMeta::Meta(Meta::Path(path)) => {
+                if path.is_ident("debug") {
+                    return Ok(0);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(-1)
+}
+
+fn parse_instrument_config(args: &AttributeArgs) -> super::InstrumentConfig {
+    for arg in args {
+        if let NestedMeta::Meta(Meta::NameValue(MetaNameValue {path, lit, ..})) = arg {
+            if path.is_ident("instrument") {
+                match lit {
+                    Lit::Str(lit_str) => {
+                        let value = lit_str.value();
+                        return super::InstrumentConfig::Skip(value);
+                    }
+                    Lit::Bool(lit_bool) => {
+                        if lit_bool.value() {
+                            return super::InstrumentConfig::Enabled;
+                        } else {
+                            return super::InstrumentConfig::None;
+                        }
+                    }
+                    _ => panic!("instrument attribute must be a string or boolean")
+                }
+            }
+        } else if let NestedMeta::Meta(Meta::Path(path)) = arg {
+            if path.is_ident("instrument") {
+                return super::InstrumentConfig::Enabled;
             }
         }
-        Some(NestedMeta::Meta(Meta::Path(path))) => {
-            let path_name = path.segments
-            .first()
-            .expect("Invalid name-value marco at second attribute")
-            .ident
-            .to_string()
-            ;
-            if "debug" != path_name.as_str() {
-                panic!("Second attribute name must be 'debug'");
-            }
-            0
-        }
-        _ => -1
-    };
-    Ok(res)
+    }
+    super::InstrumentConfig::SkipAll
 }
 
 pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: Option<Database>) -> syn::Result<TokenStream> { 
     let query_string = get_query_string(args.get(0))?; 
-    let debug_slow = get_debug_slow(args.get(1))?; 
+    let debug_slow = get_debug_slow(&args)?; 
     let db = db.unwrap_or_else(|| super::get_database_from_input_fn(&input));
+    
+    // Parse instrument configuration from attributes
+    let instrument_config = parse_instrument_config(&args);
+    
     // Extract the function name and arguments 
-    let fn_name = &input.sig.ident; 
+    let fn_name = &input.sig.ident;
+    
+    // Generate instrument attribute for tracing
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro
+    let fn_name_str = fn_name.to_string();
+    let instrument_attr = super::gen_instrument_attr(&instrument_config, &fn_name_str, &fn_name_str);
+    
     let fn_args = &input.sig.inputs; 
     let mut map_args = HashMap::new(); 
     let mut param_names: Vec<String> = fn_args.iter()
@@ -167,14 +193,16 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
     let database = super::get_database_type(db); 
     
     let final_gen = if fn_args.is_empty() {
-        quote! { 
+        quote! {
+            #instrument_attr
             pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(conn: E) -> Result<(), sqlx::Error> { 
                 #(#queries_gen)* 
                 Ok(()) 
             } 
         }
     } else {
-        quote! { 
+        quote! {
+            #instrument_attr
             pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args, conn: E) -> Result<(), sqlx::Error> { 
                 #(#queries_gen)* 
                 Ok(()) 
@@ -186,12 +214,21 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
 
 pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: Option<Database>) -> syn::Result<TokenStream> {
     let query_string = get_query_string(args.first())?;
-    let debug_slow = get_debug_slow(args.get(1))?;
+    let debug_slow = get_debug_slow(&args)?;
     
     let db = db.unwrap_or_else(|| super::get_database_from_input_fn(&input));
 
+    // Parse instrument configuration from attributes
+    let instrument_config = parse_instrument_config(&args);
+
     // Extract the function name and arguments
     let fn_name = &input.sig.ident;
+    
+    // Generate instrument attribute for tracing
+    // IMPORTANT: cfg! must be OUTSIDE quote! macro
+    let fn_name_str = fn_name.to_string();
+    let instrument_attr = super::gen_instrument_attr(&instrument_config, &fn_name_str, &fn_name_str);
+    
     let fn_args = &input.sig.inputs;
     let fn_args_with_comma = if fn_args.is_empty() {
         quote! {}
@@ -408,6 +445,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                 }
                 _ => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
@@ -437,6 +475,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                 }
                 _ => {
                     quote! {
+                        #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                             let sql = #sql;
                             let query = sqlx::query_scalar(sql)#(#binds)*;
@@ -452,6 +491,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
         },
         QueryType::RowAfftected => {
             quote! {
+                #instrument_attr
                 pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                     let sql = #sql;
                     let query = sqlx::query(sql)#(#binds)*;
@@ -464,6 +504,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
         },
         QueryType::Void => {
             quote! {
+                #instrument_attr
                 pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
                     let sql = #sql;
                     let query = sqlx::query(sql)#(#binds)*;
@@ -478,6 +519,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
         QueryType::Page => {
             let count_query = parser::convert_to_count_query(&sql, dialect.as_ref()).unwrap();
             let count_query_fn = quote! {
+                #instrument_attr
                 pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> core::result::Result<i64, sqlx::Error> {
                     let sql = #count_query;
                     let query = sqlx::query_scalar(sql)#(#binds)*;
@@ -510,6 +552,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                 
             });
             let data_query_fn = quote! {
+                #instrument_attr
                 pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma offset: i64, limit: i32, conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
                     let sql = #sql;
                     let query = sqlx::query_as::<_, #return_type>(sql)#(#page_binds)*;
@@ -538,6 +581,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             
 
             quote! {
+                #instrument_attr
                 pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args_with_comma page: impl Into<(i64, i32, bool)>, conn: E) -> #output {
                     #data_query_fn
 
