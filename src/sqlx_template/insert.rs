@@ -16,6 +16,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
         None => quote! {#struct_name_ident},
     };
     let mut fields = vec![];
+    let mut field_idents = vec![];
     let debug_slow = super::get_debug_slow_from_table_scope(&ast);
     let instrument_config = super::get_instrument_config(&ast);
     if let syn::Data::Struct(syn::DataStruct {
@@ -26,7 +27,8 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
         named.iter().for_each(|f| {
             if !has_auto_attribute(f) {
                 if let Some(ident) = f.ident.as_ref() {
-                    fields.push(ident);
+                    field_idents.push(ident);
+                    fields.push(f);
                 }
             };
         })
@@ -42,7 +44,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
     let db = db.or_else(|| Some(get_database_from_ast(&ast))).expect("Missing db config");
     let sql_fields = fields
         .iter()
-        .map(|f| super::check_column_name(f.to_string(), db))
+        .map(|f| super::get_field_name_as_column(f, db))
         .collect::<Vec<_>>()
         .join(", ");
     let sql_placeholders = match db {
@@ -63,7 +65,7 @@ pub fn derive_insert(ast: &DeriveInput, for_path: Option<&Path>, scope: Scope, d
         "INSERT INTO {table_name}({sql_fields}) VALUES ({sql_placeholders}) RETURNING *"
     );
     
-    let binds = fields.iter().map(|field| {
+    let binds = field_idents.iter().map(|field| {
         quote! {
             .bind(&re.#field)
         }

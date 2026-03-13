@@ -540,8 +540,25 @@ pub fn get_field_name(field: &syn::Field) -> String {
     field.ident.clone().unwrap().to_string()
 }
 
+/// Extract the custom column name from `#[column("name")]` attribute on a field.
+/// Returns `None` if no `#[column]` attribute is present.
+pub fn get_column_attribute(field: &syn::Field) -> Option<String> {
+    for attr in &field.attrs {
+        if attr.path.is_ident("column") {
+            if let Ok(lit) = attr.parse_args::<syn::LitStr>() {
+                return Some(lit.value());
+            }
+        }
+    }
+    None
+}
+
+/// Get the column name for a field, checking for `#[column("name")]` attribute first,
+/// then falling back to the field name. The result is also checked against reserved keywords.
 pub fn get_field_name_as_column(field: &syn::Field, db: Database) -> String {
-    check_column_name(field.ident.clone().unwrap().to_string(), db)
+    let col_name = get_column_attribute(field)
+        .unwrap_or_else(|| field.ident.clone().unwrap().to_string());
+    check_column_name(col_name, db)
 }
 
 pub fn check_valid_single_sql(sql: &str, db: Database) {
@@ -574,8 +591,42 @@ pub fn has_attribute(input: &DeriveInput, attr_name: &str) -> bool {
     input.attrs.iter().any(|attr| attr.path.is_ident(attr_name))
 }
 
+/// Generate COLUMNS const and COLUMNS_STR const for a struct, using #[column] attributes if present.
+pub fn columns_derive(ast: &DeriveInput) -> syn::Result<TokenStream> {
+    let struct_name = &ast.ident;
+    let all_fields = if let syn::Data::Struct(syn::DataStruct {
+        fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
+        ..
+    }) = ast.data
+    {
+        named.iter().collect::<Vec<_>>()
+    } else {
+        return Ok(quote! {});
+    };
+    
+    let column_names: Vec<String> = all_fields.iter().map(|field| {
+        get_column_attribute(field)
+            .unwrap_or_else(|| field.ident.as_ref().unwrap().to_string())
+    }).collect();
+    
+    let num_columns = column_names.len();
+    let column_literals = column_names.iter().map(|c| quote! { #c }).collect::<Vec<_>>();
+    let columns_str = column_names.join(", ");
+    
+    Ok(quote! {
+        impl #struct_name {
+            /// All column names as an array of string slices.
+            pub const COLUMNS: [&'static str; #num_columns] = [#(#column_literals),*];
+            
+            /// All column names as a comma-separated string.
+            pub const COLUMNS_STR: &'static str = #columns_str;
+        }
+    })
+}
+
 pub fn derive_all(input: &DeriveInput, for_path: Option<&syn::Path>, scope: Scope, db: Option<Database>) -> syn::Result<TokenStream> {
     let table_name = table_name_derive(&input)?;
+    let columns = columns_derive(&input)?;
     let insert = insert::derive_insert(&input, for_path, scope, db)?;
     let update = update::derive_update(&input, for_path, scope, db)?;
     let select = select::derive_select(&input, for_path, scope, db)?;
@@ -587,6 +638,7 @@ pub fn derive_all(input: &DeriveInput, for_path: Option<&syn::Path>, scope: Scop
 
     Ok(quote! {
         #table_name
+        #columns
         #insert
         #update
         #select

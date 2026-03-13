@@ -28,6 +28,9 @@
 - Enhanced RETURNING clause support with specific column selection.
 - Support for placeholder parameters in WHERE conditions.
 - Improved function name generation based on query parameters.
+- **Column name mapping** with `#[column("db_name")]` attribute — map Rust field names to different database column names.
+- **Column constants** (`COLUMNS`, `COLUMNS_STR`) generated automatically for each struct.
+- **`$StructName` template** in raw queries — expands to the struct's column list at compile time.
 - **Tracing integration** with `#[instrument]` attribute for observability (requires `tracing` feature).
 
 ## Requirements
@@ -86,23 +89,27 @@ pub struct User {
 }
 
 // Using individual derive macros for more control
+// #[column] maps Rust field names to database column names
 #[derive(SqlxTemplate, sqlx::FromRow, Default, Clone, Debug)]
 #[table("organizations")]
 #[db("postgres")]
 #[tp_delete(by = "id")]
-#[tp_select_one(by = "code")]
+#[tp_select_one(by = "code")]      // "code" is the Rust field name
 #[tp_select_all(order = "id desc")]
-#[tp_select_builder] // Enable builder pattern
+#[tp_select_builder]
 pub struct Organization {
     #[auto]
     pub id: i32,
+    #[column("org_name")]  // DB column is "org_name", tp_* uses field name "name"
     pub name: String,
+    #[column("org_code")]  // DB column is "org_code", tp_* uses field name "code"
     pub code: String,
     pub active: bool,
     pub created_by: Option<String>,
     #[auto]
     pub created_at: DateTime<Utc>,
 }
+// Organization::COLUMNS_STR == "id, org_name, org_code, active, created_by, created_at"
 
 #[select("
     SELECT *
@@ -344,8 +351,36 @@ For more details, please see the examples in the repository.
 - `SqlxTemplate`: Combines all above templates in one macro
 - `PostgresTemplate`, `MysqlTemplate`, `SqliteTemplate`, `AnyTemplate`: Database-specific versions
 - `TableName`: Generate table name function
-- `Columns`: Generate column name constants
+- `Columns`: Generate column name constants (`COLUMNS`, `COLUMNS_STR`, `COLUMN_<FIELD>`)
 - `DDLTemplate`: Generate DDL (CREATE/DROP TABLE) statements
+
+### Field Attributes
+- `#[auto]`: Exclude field from INSERT statements (auto-increment primary keys)
+- `#[column("db_name")]`: Map a Rust field name to a custom database column name
+
+When `#[column("db_name")]` is used, all generated SQL uses `db_name` in place of the field name.
+The `by`, `on`, and other `tp_*` attribute values always use the Rust **field name**, not the column name.
+
+### `$StructName` Template in Raw Queries
+
+In raw query macros (`#[query]`, `#[sqlite_query]`, etc.), you can use `$StructName` in SQL
+to expand to the struct's full column list at compile time:
+
+```rust
+#[derive(SqliteTemplate, sqlx::FromRow)]
+#[table("users")]
+pub struct User {
+    #[auto]
+    pub id: i32,
+    #[column("user_name")]
+    pub name: String,
+    pub active: bool,
+}
+
+// $User expands to "id, user_name, active" at compile time
+#[sqlite_query("SELECT $User FROM users WHERE active = :active")]
+pub async fn get_active_users(active: bool) -> Vec<User> {}
+```
 
 ### Builder Pattern Attributes
 - `#[tp_select_builder]`: Generate flexible SELECT query builder

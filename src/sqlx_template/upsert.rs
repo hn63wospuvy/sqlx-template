@@ -53,6 +53,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                 let mut debug_slow = debug_slow.clone();
                 let mut where_stmt_str = None;
                 let mut insert_fields = vec![];
+                let mut insert_field_idents = vec![];
                 if let syn::Data::Struct(syn::DataStruct {
                     fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
                     ..
@@ -61,7 +62,8 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     named.iter().for_each(|f| {
                         if !has_auto_attribute(f) {
                             if let Some(ident) = f.ident.as_ref() {
-                                insert_fields.push(ident);
+                                insert_field_idents.push(ident);
+                                insert_fields.push(f);
                             }
                         };
                     })
@@ -246,7 +248,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
 
                 let insert_field_stmt = insert_fields
                     .iter()
-                    .map(|f| super::check_column_name(f.to_string(), db))
+                    .map(|f| super::get_field_name_as_column(f, db))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let insert_placeholders = match db {
@@ -289,10 +291,10 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         } else if on_fields.is_empty() {
                             let mut set_stmt = insert_fields
                                 .iter()
-                                .filter(|x| !not_excluded_fields.contains(&x.to_string()))
+                                .filter(|x| !not_excluded_fields.contains(&get_field_name(x)))
                                 .map(|x| {
-                                    let column = check_column_name(x.to_string(), db);
-                                    format!(" {column} = EXCLUDED.{x}")
+                                    let column = get_field_name_as_column(x, db);
+                                    format!(" {column} = EXCLUDED.{column}")
                                 })
                                 .collect::<Vec<_>>()
                                 ;
@@ -335,10 +337,10 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         } else if on_fields.is_empty() {
                             let mut set_stmt = insert_fields
                                 .iter()
-                                .filter(|x| !not_excluded_fields.contains(&x.to_string()))
+                                .filter(|x| !not_excluded_fields.contains(&get_field_name(x)))
                                 .map(|x| {
-                                    let column = check_column_name(x.to_string(), db);
-                                    format!(" {column} = excluded.{x}")
+                                    let column = get_field_name_as_column(x, db);
+                                    format!(" {column} = excluded.{column}")
                                 })
                                 .collect::<Vec<_>>()
                                 ;
@@ -379,16 +381,15 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                         if do_nothing {
                             // MySQL doesn't have DO NOTHING, we'll use a dummy update
                             let first_field = insert_fields.first().unwrap();
-                            let column = check_column_name(first_field.to_string(), db);
+                            let column = get_field_name_as_column(first_field, db);
                             format!(" {column} = {column}")
                         } else if on_fields.is_empty() {
                             let mut set_stmt = insert_fields
                                 .iter()
-                                .filter(|x| !not_excluded_fields.contains(&x.to_string()))
+                                .filter(|x| !not_excluded_fields.contains(&get_field_name(x)))
                                 .map(|x| {
-                                    let column = check_column_name(x.to_string(), db);
-                                    let values_column = check_column_name(x.to_string(), db);
-                                    format!(" {column} = VALUES({values_column})")
+                                    let column = get_field_name_as_column(x, db);
+                                    format!(" {column} = VALUES({column})")
                                 })
                                 .collect::<Vec<_>>()
                                 ;
@@ -409,10 +410,8 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                                     !not_excluded_fields.contains(&name.to_string())
                                 })
                                 .map(|x| {
-                                    let field_name = get_field_name(x);
                                     let column = get_field_name_as_column(x, db);
-                                    let values_column = check_column_name(field_name.clone(), db);
-                                    format!(" {column} = VALUES({values_column})")
+                                    format!(" {column} = VALUES({column})")
                                 })
                                 .collect::<Vec<_>>()
                                 ;
@@ -551,7 +550,7 @@ pub fn derive_upsert(ast: &DeriveInput, for_path: Option<&syn::Path>, scope: sup
                     _ => panic!("Unsupported database for upsert")
                 };
                 super::check_valid_single_sql(&sql, db);
-                let insert_binds = insert_fields.iter().map(|field| {
+                let insert_binds = insert_field_idents.iter().map(|field| {
                     quote! {
                         .bind(&re.#field)
                     }

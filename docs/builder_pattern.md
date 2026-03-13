@@ -147,10 +147,38 @@ let deleted = User::builder_delete()
 # }
 ```
 
+## Column Name Mapping
+
+Use `#[column("db_name")]` on fields to map a Rust field name to a different database column name.
+Builder methods still use the **field name** (e.g., `.email(value)`), but the generated SQL uses the
+mapped column name.
+
+```rust
+#[derive(SqliteTemplate, FromRow, Debug, Clone)]
+#[table("users")]
+#[tp_select_builder()]
+pub struct User {
+    pub id: i32,
+    #[column("user_email")]
+    pub email: String,
+}
+```
+
+- `.email("x")` generates `WHERE user_email = ?`
+- `.order_by_email_asc()` generates `ORDER BY user_email ASC`
+
+Custom conditions can reference either the field name or the actual database column name:
+
+```rust
+#[tp_select_builder(
+    with_email_domain = "user_email LIKE :domain$String"
+)]
+```
+
 ## Validation
 
 - **Table alias validation**: Prevents use of table aliases (e.g., `u.field`) in custom conditions
-- **Column validation**: Ensures referenced columns exist in the struct
+- **Column validation**: Ensures referenced columns exist in the struct (both field names and `#[column]` mapped names are accepted)
 - **Type safety**: Compile-time parameter type checking
 - **SQL injection protection**: Uses parameterized queries
 

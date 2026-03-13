@@ -499,7 +499,7 @@ impl Chat {
     }
 }
 
-#[derive(SqlxTemplate, FromRow, Default, Clone, Debug, Columns)]
+#[derive(SqlxTemplate, FromRow, Default, Clone, Debug)]
 #[table("organizations")]
 #[db("mysql")]
 #[tp_delete(by = "id")]
@@ -508,8 +508,6 @@ impl Chat {
 pub struct Organization {
     #[auto]
     pub id: i32,
-    #[group = "a"]
-    #[group = "b"]
     pub name: String,
     pub code: String,
     pub image: Option<String>,

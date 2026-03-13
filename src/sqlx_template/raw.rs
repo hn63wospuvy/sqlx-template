@@ -17,6 +17,45 @@ use rust_format::Formatter;
 use crate::parser::{self, Mode, ValidateQueryResult};
 use crate::sqlx_template::Database;
 
+/// Extract `$StructName` patterns from SQL and return (cleaned_sql, Vec<struct_name>).
+/// Replaces `$StructName` with `*` for SQL validation purposes.
+fn extract_struct_column_templates(sql: &str) -> (String, Vec<String>) {
+    let mut result = String::new();
+    let mut struct_names = Vec::new();
+    let mut chars = sql.chars().peekable();
+    
+    while let Some(ch) = chars.next() {
+        if ch == '$' {
+            // Check if next char is an uppercase letter (struct name)
+            if let Some(&next_ch) = chars.peek() {
+                if next_ch.is_ascii_uppercase() {
+                    // Collect the struct name
+                    let mut name = String::new();
+                    while let Some(&c) = chars.peek() {
+                        if c.is_alphanumeric() || c == '_' {
+                            name.push(c);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if !struct_names.contains(&name) {
+                        struct_names.push(name.clone());
+                    }
+                    // Replace with * for SQL validation
+                    result.push('*');
+                    continue;
+                }
+            }
+            result.push(ch);
+        } else {
+            result.push(ch);
+        }
+    }
+    
+    (result, struct_names)
+}
+
 enum QueryType {
     Data,
     Scalar,
@@ -221,6 +260,12 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
     // Parse instrument configuration from attributes
     let instrument_config = parse_instrument_config(&args);
 
+    // Extract $StructName templates from SQL before validation
+    let (query_string_for_validation, struct_templates) = extract_struct_column_templates(&query_string);
+    
+    // Use original query_string for final SQL generation if no templates found
+    let has_struct_templates = !struct_templates.is_empty();
+
     // Extract the function name and arguments
     let fn_name = &input.sig.ident;
     
@@ -251,14 +296,55 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
         }
     }).collect();
 
-    // Validate query
+    // Validate query (use cleaned SQL with $Struct replaced by * for validation)
     let dialect = super::get_database_dialect(db);
-    let ValidateQueryResult {sql, params} = match parser::validate_query_with_db(&query_string, &param_names, mode, dialect.as_ref(), db) {
+    let ValidateQueryResult {sql: validated_sql, params} = match parser::validate_query_with_db(&query_string_for_validation, &param_names, mode, dialect.as_ref(), db) {
         Ok(r) => r,
         Err(e) => panic!("{e}"),
     };
+    
+    // If we have struct templates, we need to process the original query string
+    // to replace $StructName with the validated result's structure but keep template references
+    let sql = if has_struct_templates {
+        // Re-validate using original query string but replace $Struct with COLUMNS_STR references
+        // We'll generate the SQL at compile time by reconstructing from original with param replacements
+        let ValidateQueryResult {sql: original_validated, params: _} = match parser::validate_query_with_db(&query_string_for_validation, &param_names, mode, dialect.as_ref(), db) {
+            Ok(r) => r,
+            Err(e) => panic!("{e}"),
+        };
+        // Replace the * back with $StructName patterns in validated SQL
+        let mut final_sql = original_validated;
+        for struct_name in &struct_templates {
+            // The validated SQL has * where $StructName was
+            // We need to replace the first occurrence of * that corresponds to each template
+            // Since validation may reformat, reconstruct from original query with param replacements applied
+            final_sql = final_sql.replacen("*", &format!("${}", struct_name), 1);
+        }
+        final_sql
+    } else {
+        validated_sql
+    };
     let (before, after) = super::gen_debug_code(Some(debug_slow));
     
+    // Generate SQL assignment: if struct templates exist, generate runtime replacement code
+    let sql_assignment = if has_struct_templates {
+        // Generate: let sql_str = BASE_SQL.replace("$User", User::COLUMNS_STR).replace(...);
+        let mut replace_chain = quote! { let mut sql_str = #sql.to_string(); };
+        for struct_name in &struct_templates {
+            let search_pattern = format!("${}", struct_name);
+            let struct_ident = Ident::new(struct_name, Span::call_site());
+            replace_chain = quote! {
+                #replace_chain
+                sql_str = sql_str.replace(#search_pattern, #struct_ident::COLUMNS_STR);
+            };
+        }
+        quote! {
+            #replace_chain
+            let sql: &str = &sql_str;
+        }
+    } else {
+        quote! { let sql = #sql; }
+    };
 
     // Generate bind statement by param extracted from query
 
@@ -434,7 +520,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                 Some(DataType::Stream) => {
                     quote! {
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args_with_comma conn: E) -> #output {
-                            let sql = #sql;
+                            #sql_assignment
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
                             #before
                             let result = #fetch_call;
@@ -447,7 +533,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                     quote! {
                         #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
-                            let sql = #sql;
+                            #sql_assignment
                             let query = sqlx::query_as::<_, #return_type>(sql)#(#binds)*;
                             #before
                             let result = #fetch_call;
@@ -464,7 +550,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                 Some(DataType::Stream) => {
                     quote! {
                         pub fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + 'c>(#fn_args_with_comma conn: E) -> #output {
-                            let sql = #sql;
+                            #sql_assignment
                             let query = sqlx::query_scalar(sql)#(#binds)*;
                             #before
                             let result = #fetch_call;
@@ -477,7 +563,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
                     quote! {
                         #instrument_attr
                         pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
-                            let sql = #sql;
+                            #sql_assignment
                             let query = sqlx::query_scalar(sql)#(#binds)*;
                             #before
                             let result = #fetch_call;
@@ -493,7 +579,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             quote! {
                 #instrument_attr
                 pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
-                    let sql = #sql;
+                    #sql_assignment
                     let query = sqlx::query(sql)#(#binds)*;
                     #before
                     let result = #fetch_call;
@@ -506,7 +592,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             quote! {
                 #instrument_attr
                 pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> #output {
-                    let sql = #sql;
+                    #sql_assignment
                     let query = sqlx::query(sql)#(#binds)*;
                     #before
                     let query = #fetch_call;
@@ -518,10 +604,27 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
         },
         QueryType::Page => {
             let count_query = parser::convert_to_count_query(&sql, dialect.as_ref()).unwrap();
+            let count_sql_assignment = if has_struct_templates {
+                let mut replace_chain = quote! { let mut sql_str = #count_query.to_string(); };
+                for struct_name in &struct_templates {
+                    let search_pattern = format!("${}", struct_name);
+                    let struct_ident = Ident::new(struct_name, Span::call_site());
+                    replace_chain = quote! {
+                        #replace_chain
+                        sql_str = sql_str.replace(#search_pattern, #struct_ident::COLUMNS_STR);
+                    };
+                }
+                quote! {
+                    #replace_chain
+                    let sql: &str = &sql_str;
+                }
+            } else {
+                quote! { let sql = #count_query; }
+            };
             let count_query_fn = quote! {
                 #instrument_attr
                 pub async fn count_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma conn: E) -> core::result::Result<i64, sqlx::Error> {
-                    let sql = #count_query;
+                    #count_sql_assignment
                     let query = sqlx::query_scalar(sql)#(#binds)*;
                     #before
                     let result = query.fetch_one(conn).await;
@@ -532,7 +635,34 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             param_names.push("offset".to_string());
             param_names.push("limit".to_string());
             
-            let ValidateQueryResult {sql, params} = parser::convert_to_page_query_with_db(&query_string, dialect.as_ref(), &param_names, db).unwrap();
+            let ValidateQueryResult {sql: page_sql, params} = parser::convert_to_page_query_with_db(&query_string_for_validation, dialect.as_ref(), &param_names, db).unwrap();
+            // Re-inject $StructName into page_sql if templates exist
+            let page_sql = if has_struct_templates {
+                let mut final_sql = page_sql;
+                for struct_name in &struct_templates {
+                    final_sql = final_sql.replacen("*", &format!("${}", struct_name), 1);
+                }
+                final_sql
+            } else {
+                page_sql
+            };
+            let page_sql_assignment = if has_struct_templates {
+                let mut replace_chain = quote! { let mut sql_str = #page_sql.to_string(); };
+                for struct_name in &struct_templates {
+                    let search_pattern = format!("${}", struct_name);
+                    let struct_ident = Ident::new(struct_name, Span::call_site());
+                    replace_chain = quote! {
+                        #replace_chain
+                        sql_str = sql_str.replace(#search_pattern, #struct_ident::COLUMNS_STR);
+                    };
+                }
+                quote! {
+                    #replace_chain
+                    let sql: &str = &sql_str;
+                }
+            } else {
+                quote! { let sql = #page_sql; }
+            };
             let page_binds = params.iter().map(|field| {
                 // param starts with ':'
                 if field.as_str() == ":offset" {
@@ -554,7 +684,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
             let data_query_fn = quote! {
                 #instrument_attr
                 pub async fn data_query<'c, E: sqlx::Executor<'c, Database = #database>>(#fn_args_with_comma offset: i64, limit: i32, conn: E) -> core::result::Result<Vec<#return_type>, sqlx::Error> {
-                    let sql = #sql;
+                    #page_sql_assignment
                     let query = sqlx::query_as::<_, #return_type>(sql)#(#page_binds)*;
                     #before
                     let result = query.fetch_all(conn).await;

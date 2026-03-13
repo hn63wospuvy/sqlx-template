@@ -27,6 +27,8 @@ mod parser;
 ///   - If not configured, no debug logs will be generated.
 /// - `auto`: Applied to fields that should be excluded from the insert statement, typically for auto-incrementing primary keys.
 /// - `db`: Specifies the target database type (e.g., `#[db("postgres")]`, `#[db("mysql")]`, `#[db("sqlite")]`).
+/// - `column`: Applied to individual fields to specify a custom database column name (e.g., `#[column("db_col_name")]`).
+///   When present, the generated SQL will use the custom column name instead of the Rust field name.
 ///
 /// Additionally, when using PostgreSQL (`#[db("postgres")]`), the library will generate an `insert_return` function that returns the newly inserted record.
 ///
@@ -85,7 +87,7 @@ mod parser;
 ///
 
 
-#[proc_macro_derive(InsertTemplate, attributes(table, auto, debug_slow, db, instrument, tp_insert))]
+#[proc_macro_derive(InsertTemplate, attributes(table, auto, debug_slow, db, instrument, tp_insert, column))]
 pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::insert::derive_insert(&input, None, sqlx_template::Scope::Struct, None) {
@@ -118,6 +120,9 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     - If not configured, no debug logs will be generated.
 /// - `debug_slow`: Configures debug logs for the executed query, with priority given to the value in `tp_update`.
 /// - `db`: Specifies the target database type (e.g., `#[db("postgres")]`).
+/// - `column`: Applied to individual fields to specify a custom database column name (e.g., `#[column("db_col_name")]`).
+///   When present, the generated SQL will use the custom column name instead of the Rust field name.
+///   Note: `by` and `on` values in `tp_update` always use the Rust **field name**, not the column name.
 /// - `tp_update_builder`: Builder pattern configuration for UPDATE operations with custom WHERE conditions.
 ///
 #[doc = include_str!("../docs/builder_pattern.md")]
@@ -176,7 +181,7 @@ pub fn insert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// This macro relies on `sqlx`, so you need to add `sqlx` to your `[dependencies]` in `Cargo.toml`
 /// and properly configure the database connection before using the generated update methods.
 
-#[proc_macro_derive(UpdateTemplate, attributes(table, tp_update, tp_update_builder, debug_slow, db, tp_update_builder, instrument))]
+#[proc_macro_derive(UpdateTemplate, attributes(table, tp_update, tp_update_builder, debug_slow, db, tp_update_builder, instrument, column))]
 pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::update::derive_update(&input, None, sqlx_template::Scope::Struct, None) {
@@ -210,6 +215,9 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///     - If set to a value greater than `0`: Only logs the query if the execution time exceeds the configured value (in milliseconds).
 ///     - If not configured, no debug logs will be generated.
 /// - `db`: Specifies the target database type (e.g., `#[db("postgres")]`).
+/// - `column`: Applied to individual fields to specify a custom database column name (e.g., `#[column("db_col_name")]`).
+///   When present, the generated SQL will use the custom column name instead of the Rust field name.
+///   Note: `by` values in `tp_delete` always use the Rust **field name**, not the column name.
 /// - `tp_delete_builder`: Builder pattern configuration for DELETE operations with custom WHERE conditions.
 ///
 #[doc = include_str!("../docs/builder_pattern.md")]
@@ -262,7 +270,7 @@ pub fn update_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated delete methods.
 ///
 
-#[proc_macro_derive(DeleteTemplate, attributes(table, tp_delete, tp_delete_builder, debug_slow, db, tp_delete_builder, instrument))]
+#[proc_macro_derive(DeleteTemplate, attributes(table, tp_delete, tp_delete_builder, debug_slow, db, tp_delete_builder, instrument, column))]
 pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::delete::derive_delete(&input, None, sqlx_template::Scope::Struct, None) {
@@ -296,6 +304,9 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// - `tp_select_count`: Similar to `tp_select_all`, but returns the count of records as `i64`.
 /// - `tp_select_page`: Similar to `tp_select_all`, but accepts pagination parameters and returns a tuple of all records and the total count.
 /// - `db`: Specifies the target database type (e.g., `#[db("postgres")]`).
+/// - `column`: Applied to individual fields to specify a custom database column name (e.g., `#[column("db_col_name")]`).
+///   When present, the generated SQL will use the custom column name instead of the Rust field name.
+///   Note: `by` and `order` values in `tp_select_*` always use the Rust **field name**, not the column name.
 /// - `tp_select_builder`: Builder pattern configuration for SELECT operations with custom WHERE conditions.
 ///
 /// The `debug_slow` attribute at the struct level has priority over the value in `tp_select_*`.
@@ -446,7 +457,7 @@ pub fn delete_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// and properly configure the database connection before using the generated query methods.
 ///
 
-#[proc_macro_derive(SelectTemplate, attributes(table, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_select_builder, db, tp_select_builder, auto, instrument))]
+#[proc_macro_derive(SelectTemplate, attributes(table, debug_slow, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_select_builder, db, tp_select_builder, auto, instrument, column))]
 pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::select::derive_select(&input, None, sqlx_template::Scope::Struct, None) {
@@ -458,20 +469,27 @@ pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 
 
 
-/// `Columns` is a derive macro that generates column name constants and utility functions
-/// for database operations. This macro creates static string constants for each field
-/// in the struct, making it easier to reference column names in queries.
+/// `Columns` is a derive macro that generates column name constants, a column list array,
+/// and a comma-separated column string for use in database operations.
+///
+/// When using `SqlxTemplate`, `PostgresTemplate`, `MysqlTemplate`, `SqliteTemplate`, or `AnyTemplate`,
+/// the `COLUMNS` and `COLUMNS_STR` constants are automatically generated — you do **not** need to
+/// derive `Columns` separately for those structs.
 ///
 /// # Attributes
 ///
 /// `Columns` accepts the following attributes:
 /// - `group`: Groups fields together for specific operations (optional).
+/// - `column`: Applied to individual fields to specify a custom database column name.
+///   When `#[column("db_name")]` is set, all generated constants and SQL will use `db_name`
+///   instead of the Rust field name.
 ///
-/// # Generated Functions
+/// # Generated Constants
 ///
-/// The macro generates the following for each field:
-/// - A constant with the column name (e.g., `COLUMN_ID` for field `id`)
-/// - Utility functions for accessing column names programmatically
+/// The macro generates the following:
+/// - `COLUMNS`: A `[&str; N]` array containing all column names in declaration order.
+/// - `COLUMNS_STR`: A `&str` constant with all column names joined by `, ` (e.g., `"id, email, name"`).
+/// - `as_select_all_fields()`: A `const fn` returning the same comma-separated string as `COLUMNS_STR`.
 ///
 /// # Example
 ///
@@ -481,26 +499,28 @@ pub fn select_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// #[derive(Columns)]
 /// pub struct User {
 ///     pub id: i32,
+///     #[column("user_email")]
 ///     pub email: String,
-///     #[group = "personal"]
+///     #[column("user_name")]
 ///     pub name: String,
-///     #[group = "personal"]
 ///     pub age: i32,
 /// }
 ///
-/// // Usage:
-/// // User::COLUMN_ID returns "id"
-/// // User::COLUMN_EMAIL returns "email"
-/// // User::COLUMN_NAME returns "name"
-/// // User::COLUMN_AGE returns "age"
+/// // Full column list:
+/// assert_eq!(User::COLUMNS, ["id", "user_email", "user_name", "age"]);
+///
+/// // Comma-separated column string (useful in raw SQL):
+/// assert_eq!(User::COLUMNS_STR, "id, user_email, user_name, age");
 /// ```
 ///
 /// # Note
 ///
 /// This macro is useful for maintaining consistency between struct field names
 /// and database column names, and provides compile-time safety when referencing columns.
+/// The `COLUMNS_STR` constant can also be used with the `$StructName` template in raw query macros
+/// (see [`query`] macro documentation).
 ///
-#[proc_macro_derive(Columns, attributes(group))]
+#[proc_macro_derive(Columns, attributes(group, column))]
 pub fn columns_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match columns::derive(input) {
@@ -592,6 +612,9 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///   - `fn_name`: The name of the generated function. If empty, the library will automatically generate a function name.
 ///   - `returning`: If set to true, the generated function will return the upserted record (PostgreSQL only).
 ///   - `debug_slow`: Configures debug logs for the executed query (overrides struct-level setting).
+/// - `column`: Applied to individual fields to specify a custom database column name (e.g., `#[column("db_col_name")]`).
+///   When present, the generated SQL will use the custom column name instead of the Rust field name.
+///   Note: `by` and `on` values in `tp_upsert` always use the Rust **field name**, not the column name.
 ///
 /// # Database Support
 ///
@@ -659,7 +682,7 @@ pub fn ddl_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// This macro relies on `sqlx` and database-specific upsert syntax. Make sure your target
 /// database supports the generated upsert statements.
 ///
-#[proc_macro_derive(UpsertTemplate, attributes(table, tp_upsert, debug_slow, db, instrument))]
+#[proc_macro_derive(UpsertTemplate, attributes(table, tp_upsert, debug_slow, db, instrument, column))]
 pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::upsert::derive_upsert(&input, None, sqlx_template::Scope::Struct, None) {
@@ -674,12 +697,18 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// operations based on `sqlx`. It's a convenience macro that applies `InsertTemplate`, `UpdateTemplate`,
 /// `SelectTemplate`, `DeleteTemplate`, `UpsertTemplate`, and `TableName` all at once.
 ///
+/// It also automatically generates `COLUMNS`, `COLUMNS_STR`, and per-field `COLUMN_<FIELD>` constants
+/// (equivalent to deriving `Columns`). Do **not** derive both `SqlxTemplate` and `Columns` on the same struct.
+///
 /// # Attributes
 ///
 /// `SqlxTemplate` accepts all attributes from the individual template macros:
 /// - `table`: Specifies the name of the table in the database (mandatory).
 /// - `debug_slow`: Global debug configuration for all generated functions.
 /// - `auto`: Applied to fields that should be excluded from insert statements.
+/// - `column`: Applied to individual fields to specify a custom database column name
+///   (e.g., `#[column("db_col_name")]`). All generated SQL will use the custom name.
+///   Note: `by`, `on`, and other `tp_*` attribute values always use the Rust **field name**.
 /// - `tp_select_all`, `tp_select_one`, `tp_select_page`, `tp_select_stream`, `tp_select_count`: Select operation configurations.
 /// - `tp_update`: Update operation configurations.
 /// - `tp_delete`: Delete operation configurations.
@@ -698,6 +727,7 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// - Delete operations: Based on `tp_delete` configurations
 /// - Upsert operations: Based on `tp_upsert` configurations
 /// - Table name function: `table_name()`
+/// - Column constants: `COLUMNS`, `COLUMNS_STR`, and `COLUMN_<FIELD>` for each field
 ///
 /// # Example
 ///
@@ -719,10 +749,15 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// pub struct User {
 ///     #[auto]
 ///     pub id: i32,
+///     #[column("user_email")]  // DB column is "user_email", but tp_* uses field name "email"
 ///     pub email: String,
 ///     pub password: String,
 ///     pub version: i32,
 /// }
+///
+/// // Generated column constants:
+/// // User::COLUMNS_STR == "id, user_email, password, version"
+/// // User::COLUMNS == ["id", "user_email", "password", "version"]
 ///
 /// let user = User {
 ///     id: 1,
@@ -750,7 +785,7 @@ pub fn upsert_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// This is the most convenient macro to use when you need comprehensive database operations
 /// for a struct. It combines all individual template macros into one.
 ///
-#[proc_macro_derive(SqlxTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, tp_update_builder, tp_select_builder, tp_delete_builder, auto, debug_slow, db, instrument, tp_insert))]
+#[proc_macro_derive(SqlxTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, tp_update_builder, tp_select_builder, tp_delete_builder, auto, debug_slow, db, instrument, tp_insert, column))]
 pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, None) {
@@ -831,7 +866,7 @@ pub fn sqlx_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// This macro is specifically designed for PostgreSQL and may not work with other databases.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(PostgresTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert))]
+#[proc_macro_derive(PostgresTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert, column))]
 pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Postgres)) {
@@ -913,7 +948,7 @@ pub fn postgres_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 /// This macro is specifically designed for MySQL and generates MySQL-compatible SQL syntax.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(MysqlTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert))]
+#[proc_macro_derive(MysqlTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert, column))]
 pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Mysql)) {
@@ -1010,7 +1045,7 @@ pub fn mysql_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// This macro is specifically designed for SQLite and generates SQLite-compatible SQL syntax.
 /// Use `SqlxTemplate` for database-agnostic code or other database-specific templates for other databases.
 ///
-#[proc_macro_derive(SqliteTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert))]
+#[proc_macro_derive(SqliteTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, tp_select_builder, tp_update_builder, tp_delete_builder, instrument, tp_insert, column))]
 pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Sqlite)) {
@@ -1091,7 +1126,7 @@ pub fn sqlite_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// of database-specific optimizations. Use database-specific templates for better performance
 /// when targeting a single database type.
 ///
-#[proc_macro_derive(AnyTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, instrument, tp_insert))]
+#[proc_macro_derive(AnyTemplate, attributes(table, tp_upsert, tp_select_all, tp_select_one, tp_select_page, tp_select_stream, tp_select_count, tp_update, tp_delete, auto, debug_slow, instrument, tp_insert, column))]
 pub fn any_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match sqlx_template::derive_all(&input, None, sqlx_template::Scope::Struct, Some(Database::Any)) {
@@ -1364,6 +1399,33 @@ pub fn sqlite_multi_query(args: TokenStream, item: TokenStream) -> proc_macro::T
 ///   - An integer value. If not provided, the default is no debugging.
 ///   - `0`: Prints the query before execution.
 ///   - Greater than `0`: Prints the query and execution time if it exceeds the specified number of milliseconds.
+///
+/// # `$StructName` Column Template
+///
+/// You can use `$StructName` in a SQL query to automatically expand it to the struct's column list
+/// (i.e., `StructName::COLUMNS_STR`) at **compile time**. The struct must derive `Columns` or one of
+/// the template macros (`SqlxTemplate`, `SqliteTemplate`, etc.) to have `COLUMNS_STR` available.
+///
+/// ```rust,ignore
+/// use sqlx_template::{sqlite_query, SqliteTemplate, Columns};
+///
+/// #[derive(SqliteTemplate, sqlx::FromRow)]
+/// #[table("users")]
+/// pub struct User {
+///     #[auto]
+///     pub id: i32,
+///     #[column("user_name")]
+///     pub name: String,
+///     pub active: bool,
+/// }
+///
+/// // $User expands to "id, user_name, active" at runtime
+/// #[sqlite_query("SELECT $User FROM users WHERE active = :active")]
+/// pub async fn get_active_users(active: bool) -> Vec<User> {}
+/// ```
+///
+/// Multiple `$Struct` references are supported in a single query.
+/// The expansion is done at compile time with zero runtime overhead.
 ///
 /// # Function Signature
 ///

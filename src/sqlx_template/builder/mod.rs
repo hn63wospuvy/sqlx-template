@@ -225,11 +225,18 @@ impl BuilderConfig {
 
         let mut custom_conditions = Vec::new();
 
-        // Get all field names for validation
-        let field_names: HashSet<String> = fields
+        // Get all field names for validation (includes both field names and #[column] names)
+        let mut field_names: HashSet<String> = fields
             .iter()
             .filter_map(|f| f.ident.as_ref().map(|i| i.to_string()))
             .collect();
+        // Also include #[column("...")] mapped names so custom conditions can reference
+        // actual DB column names
+        for f in fields {
+            if let Some(col_name) = super::get_column_attribute(f) {
+                field_names.insert(col_name);
+            }
+        }
 
         for attr in &ast.attrs {
             if let Ok(Meta::List(meta_list)) = attr.parse_meta() {

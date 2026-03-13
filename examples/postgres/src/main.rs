@@ -474,7 +474,7 @@ pub struct User {
 
 
 
-#[derive(SqlxTemplate, FromRow, Default, Clone, Debug, Columns)]
+#[derive(SqlxTemplate, FromRow, Default, Clone, Debug)]
 #[table("organizations")]
 #[db("postgres")]
 #[tp_delete(by = "id")]
@@ -483,8 +483,6 @@ pub struct User {
 pub struct Organization {
     #[auto]
     pub id: i32,
-    #[group = "a"]
-    #[group = "b"]
     pub name: String,
     pub code: String,
     pub image: Option<String>,

@@ -529,7 +529,7 @@ pub struct Chat {
 }
 
 
-#[derive(SqliteTemplate, FromRow, Default, Clone, Debug, Columns)]
+#[derive(SqliteTemplate, FromRow, Default, Clone, Debug)]
 #[table("organizations")]
 #[tp_delete(by = "id")]
 #[tp_select_one(by = "code")]
@@ -537,8 +537,6 @@ pub struct Chat {
 pub struct Organization {
     #[auto]
     pub id: i32,
-    #[group = "a"]
-    #[group = "b"]
     pub name: String,
     pub code: String,
     pub image: Option<String>,
