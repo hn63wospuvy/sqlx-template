@@ -171,6 +171,27 @@ fn parse_instrument_config(args: &AttributeArgs) -> super::InstrumentConfig {
     super::InstrumentConfig::SkipAll
 }
 
+/// Emit the user's parameter list so that a `conn: E` parameter can be appended after it.
+///
+/// The subtlety is the trailing comma. `syn` keeps whatever the source wrote: for
+/// `fn f(a: A, b: B,)` the `Punctuated` carries a trailing `,` and reproduces it in `ToTokens`.
+/// Appending another one unconditionally produces `(a: A, b: B, , conn: E)` — not valid Rust, and
+/// the failure surfaces far from its cause because the generated code is only rejected later.
+///
+/// This is not a rare shape. `rustfmt` writes a trailing comma every time it breaks a parameter
+/// list across lines (`fn_params_layout = "Tall"`, the default), which it does for any signature
+/// past `max_width`. So `cargo fmt` on a crate that uses these macros was enough to break the
+/// build, and the resulting error pointed at the attribute rather than at the comma.
+fn join_args_for_conn(fn_args: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>) -> TokenStream {
+    if fn_args.is_empty() {
+        quote! {}
+    } else if fn_args.trailing_punct() {
+        quote! {#fn_args}
+    } else {
+        quote! {#fn_args ,}
+    }
+}
+
 pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: Option<Database>) -> syn::Result<TokenStream> { 
     let query_string = get_query_string(args.get(0))?; 
     let debug_slow = get_debug_slow(&args)?; 
@@ -231,21 +252,12 @@ pub fn multi_query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>
     } 
     let database = super::get_database_type(db); 
     
-    let final_gen = if fn_args.is_empty() {
-        quote! {
-            #instrument_attr
-            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(conn: E) -> Result<(), sqlx::Error> { 
-                #(#queries_gen)* 
-                Ok(()) 
-            } 
-        }
-    } else {
-        quote! {
-            #instrument_attr
-            pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args, conn: E) -> Result<(), sqlx::Error> { 
-                #(#queries_gen)* 
-                Ok(()) 
-            } 
+    let fn_args_with_comma = join_args_for_conn(fn_args);
+    let final_gen = quote! {
+        #instrument_attr
+        pub async fn #fn_name<'c, E: sqlx::Executor<'c, Database = #database> + Copy>(#fn_args_with_comma conn: E) -> Result<(), sqlx::Error> {
+            #(#queries_gen)*
+            Ok(())
         }
     }; 
     let res = super::gen_with_doc(final_gen); 
@@ -275,11 +287,7 @@ pub fn query_derive(input: ItemFn, args: AttributeArgs, mode: Option<Mode>, db: 
     let instrument_attr = super::gen_instrument_attr(&instrument_config, &fn_name_str, &fn_name_str);
     
     let fn_args = &input.sig.inputs;
-    let fn_args_with_comma = if fn_args.is_empty() {
-        quote! {}
-    } else {
-        quote! {#fn_args ,}
-    };
+    let fn_args_with_comma = join_args_for_conn(fn_args);
     let mut map_args = HashMap::new();
     let mut param_names: Vec<String> = fn_args.iter().filter_map(|arg| {
         match arg {

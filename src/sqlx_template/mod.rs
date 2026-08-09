@@ -515,10 +515,19 @@ pub fn get_database_dialect(db: Database) -> Box<dyn Dialect> {
 }
 
 pub fn gen_with_doc(func: TokenStream) -> TokenStream {
+    let raw = func.to_string();
+    // Pretty-printing is COSMETIC: it only makes the generated code readable inside the doc
+    // comment. It must never decide whether the crate compiles. `RustFmt::format_str` shells out
+    // to rustfmt, so it fails for reasons that have nothing to do with the caller — rustfmt not
+    // installed, a sandbox that forbids spawning, or generated code this version of rustfmt
+    // cannot parse. `.unwrap()` turned every one of those into `custom attribute panicked` with a
+    // `<stdin>:L:C` location that points into a subprocess the user never ran.
+    let pretty = RustFmt::default()
+        .format_str(&raw)
+        .unwrap_or_else(|_| raw.clone());
     let doc_string = format!(
         "Automatically generated function by sqlx-template\n\n```rust\n{}\n```",
-        RustFmt::default().format_str(func.to_string()).unwrap()
-        
+        pretty
     );
     // Include the documentation in the generated function
     let gen_with_doc = quote! {
